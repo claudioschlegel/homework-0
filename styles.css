@@ -211,3 +211,6 @@ details.fold[open] > summary::after { content: "－"; }
   nav::-webkit-scrollbar { display: none; }
   nav a { white-space: nowrap; }
 }
+
+.goal-row { margin-top: 12px; }
+.goal-row-top { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px; font-size: 14px; margin-bottom: 6px; }

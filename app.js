@@ -37,7 +37,7 @@
       ["d1", "Salary · BBVA", ""], ["d2", "TRF · daily expenses", ""], ["d3", "Fácil card · online shopping", ""],
       ["d4", "Cash", ""], ["d5", "Regina · TRF", "Regina"], ["d6", "Regina · Cash", "Regina"], ["d7", "PR", ""],
     ].map(([id, name, parent]) => ({ id, name, parent }));
-    return { goal: 5500000, goalDate: "", streams, destinations, entries: {}, allocations: {} };
+    return { goal: 5500000, interestGoal: 1500000, goalDate: "", streams, destinations, entries: {}, allocations: {} };
   }
   let S = load();
 
@@ -287,16 +287,16 @@
         <div class="hero-top">
           <div><div class="label">Monthly income · ${esc(monthLabel(fullK))}${isCur ? " so far" : ""}</div>
             <div class="hero-value">${esc(money(full.total))}</div>
-            <div class="hint">${isFinite(chg) ? `<span class="${chg >= 0 ? "pos" : "neg"}">${chg >= 0 ? "+" : ""}${pct(chg)}</span> vs ${esc(monthLabel(shiftMonth(fullK, -1)))} · ` : ""}Goal ${esc(money(goal))}/mo</div></div>
+            <div class="hint">${isFinite(chg) ? `<span class="${chg >= 0 ? "pos" : "neg"}">${chg >= 0 ? "+" : ""}${pct(chg)}</span> vs ${esc(monthLabel(shiftMonth(fullK, -1)))}` : ""}</div></div>
           <div class="hero-side">${isCur ? "" : `<div class="label">${esc(monthLabel(curK))} so far</div><div class="side-value">${esc(money(now.total))}</div>`}
             <a href="#income" class="hint">Update income ›</a></div>
         </div>
-        <div class="hero-bar" data-tip="${esc(money(full.total))} of ${esc(money(goal))}"><div style="width:${ratio * 100}%"></div><span style="${ratio > 0.25 ? "" : `left:calc(${ratio * 100}% + 8px);color:var(--ink)`}">${pct(goal ? full.total / goal : NaN)} of goal</span></div>
-        <div class="hint">Gap to goal: ${esc(money(Math.max(0, goal - full.total)))}</div>
+        ${goalBar("Total income", full.total, goal, "var(--s1)")}
+        ${goalBar("Interest income", full.groups["Interests"] || 0, +I.interestGoal || 0, "var(--s1)")}
       </div>`;
     return `
       <h1>Dashboard</h1>
-      <p class="sub">Income against your MXN 5.5M monthly goal. More sections appear here as you fill in the other tabs.</p>
+      <p class="sub">Income against your two monthly goals: MXN 5.5M total and MXN 1.5M from interest. More sections appear here as you fill in the other tabs.</p>
       <div class="grid">
         ${hero}
         <div class="card span-12"><h2>Income by month</h2>${incomeChart(curK)}</div>
@@ -598,9 +598,20 @@ ONE DECISION FOR NEXT MONTH
       const rows = GROUPS.map((gr) => `${gr}: ${esc(money(d.groups[gr]))}`).join("<br>");
       g += `<rect x="${L + step * i}" y="${T}" width="${step}" height="${plotH}" fill="transparent" data-tip="<b>${esc(monthLabel(d.k))}</b> · ${esc(money(d.total))}<br>${rows}<br>${goal ? pct(d.total / goal) + " of goal" : ""}"/>`;
     });
-    if (goal) g += `<line x1="${L}" x2="${W}" y1="${y(goal)}" y2="${y(goal)}" stroke="var(--ink)" stroke-dasharray="4 4" stroke-width="1"/><text x="${W}" y="${y(goal) - 6}" text-anchor="end" style="fill:var(--ink)">Goal ${esc(money(goal, true))}/mo</text>`;
+    if (goal) g += `<line x1="${L}" x2="${W}" y1="${y(goal)}" y2="${y(goal)}" stroke="var(--ink)" stroke-dasharray="4 4" stroke-width="1"/><text x="${L + 6}" y="${y(goal) - 6}" text-anchor="start" style="fill:var(--ink)">Goal ${esc(money(goal, true))}/mo</text>`;
+    const ig = +S.income.interestGoal || 0;
+    if (ig) g += `<line x1="${L}" x2="${W}" y1="${y(ig)}" y2="${y(ig)}" stroke="var(--s1)" stroke-dasharray="2 4" stroke-width="1.5"/><text x="${L + 6}" y="${y(ig) - 6}" text-anchor="start" style="fill:var(--ink-2)">Interest goal ${esc(money(ig, true))}/mo</text>`;
     return `<div class="legend" style="flex-wrap:wrap">${GROUPS.map((gr) => `<span><i style="background:${GROUP_COLOR[gr]}"></i>${gr}</span>`).join("")}</div>
       <div><svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Monthly income by group against goal">${g}</svg></div>`;
+  }
+
+  function goalBar(label, v, goal, color) {
+    if (!goal) return "";
+    const r = Math.min(1, v / goal);
+    return `<div class="goal-row">
+      <div class="goal-row-top"><span>${esc(label)}</span><span><b>${esc(money(v))}</b> <span class="muted">of ${esc(money(goal))}</span></span></div>
+      <div class="hero-bar" data-tip="${esc(money(v))} of ${esc(money(goal))} · gap ${esc(money(Math.max(0, goal - v)))}"><div style="width:${r * 100}%;background:${color}"></div><span style="${r > 0.25 ? "" : `left:calc(${r * 100}% + 8px);color:var(--ink)`}">${pct(v / goal)}</span></div>
+      <div class="hint">Gap ${esc(money(Math.max(0, goal - v)))}</div></div>`;
   }
 
   views.income = () => {
@@ -624,6 +635,7 @@ ONE DECISION FOR NEXT MONTH
     const tiles = [
       ["Income " + monthLabel(k) + (inProgress ? " so far" : ""), money(cur.total), inProgress ? `${money(prev.total)} in ${monthLabel(prevK)}` : isFinite(mom) ? `${mom >= 0 ? "+" : ""}${pct(mom)} vs ${monthLabel(prevK)}` : "No prior month", !inProgress && isFinite(mom) ? (mom >= 0 ? "pos" : "neg") : ""],
       ["Progress to goal", pct(goal ? cur.total / goal : NaN), `Gap ${money(gap)}`, ""],
+      ["Interest vs goal", pct(I.interestGoal ? (cur.groups["Interests"] || 0) / I.interestGoal : NaN), `${money(cur.groups["Interests"] || 0)} of ${money(I.interestGoal || 0)}`, ""],
       ["Monthly growth", gr == null ? "–" : pct(gr), gr == null ? "Needs two full months" : `Goal reached: ${proj}`, gr != null && gr < 0 ? "neg" : ""],
     ];
 
@@ -662,7 +674,7 @@ ONE DECISION FOR NEXT MONTH
         <button data-mshift="1" aria-label="Next month">›</button>
       </div>
       <div class="grid">
-        ${tiles.map(([l, v, h, c]) => `<div class="card tile span-4"><div class="label">${l}</div><div class="value">${v}</div><div class="hint ${c}">${h}</div></div>`).join("")}
+        ${tiles.map(([l, v, h, c]) => `<div class="card tile span-3"><div class="label">${l}</div><div class="value">${v}</div><div class="hint ${c}">${h}</div></div>`).join("")}
         <div class="card span-12"><h2>Monthly income vs goal</h2>${incomeChart(k)}
           <div class="goal" style="margin-bottom:0"><div class="bars"><div class="track" style="height:12px" data-tip="${esc(money(cur.total))} of ${esc(money(goal))}"><div class="fill" style="width:${goal ? Math.min(100, (cur.total / goal) * 100) : 0}%"></div></div></div>
           <div class="meta">${esc(money(cur.total))} of ${esc(money(goal))} in ${esc(monthLabel(k))}. ${need}</div></div>
@@ -714,6 +726,7 @@ ONE DECISION FOR NEXT MONTH
           </form>
           <form class="row" id="goalForm">
             <label class="f">Monthly income goal<input name="goal" inputmode="decimal" value="${goal}"></label>
+            <label class="f">Monthly interest goal<input name="interestGoal" inputmode="decimal" value="${I.interestGoal || ""}"></label>
             <label class="f">Reach it by<input type="date" name="goalDate" value="${esc(I.goalDate || "")}"></label>
             <button>Update goal</button>
           </form>
@@ -866,7 +879,7 @@ Amounts are positive numbers without currency symbols. Do not invent items you c
       commit();
     };
     $("#destForm").onsubmit = (e) => { e.preventDefault(); keep(); I.destinations.push({ id: "d" + uid(), name: formData(e.target).name, parent: "" }); commit(); };
-    $("#goalForm").onsubmit = (e) => { e.preventDefault(); keep(); const x = formData(e.target); I.goal = num(x.goal) || I.goal; I.goalDate = x.goalDate; commit(); };
+    $("#goalForm").onsubmit = (e) => { e.preventDefault(); keep(); const x = formData(e.target); I.goal = num(x.goal) || I.goal; I.interestGoal = num(x.interestGoal); I.goalDate = x.goalDate; commit(); };
     window.onbeforeunload = () => { if (dirtyInc || dirtyAlloc) { keep(); save(); } };
     mountPhotoBox();
   }
