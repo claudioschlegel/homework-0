@@ -18,15 +18,37 @@
 
   // ---------- state ----------
   const blank = () => ({
-    settings: { currency: "USD", emergencyMonths: 6 },
+    settings: { currency: "MXN", emergencyMonths: 6 },
     transactions: [], accounts: [], goals: [], notes: [], snapshots: [],
+    income: incomeSeed(), v: 2,
   });
+
+  // Your income structure. Streams and destinations are editable in the app.
+  function incomeSeed() {
+    const groups = [
+      ["Interests", true, ["FinH", "Aplazo", "Podemos Progresar"]],
+      ["Cash cows", true, ["Exitus & Exitus Optiserv", "Calidris", "TEU", "Altavista", "Luel", "Human", "Alakart", "JNS"]],
+      ["Dividends", true, ["FinH", "Podemos", "Bitline"]],
+      ["Deal building", false, ["Maslow", "Proyecto Pásalo", "Disel"]],
+    ];
+    const streams = []; let n = 0;
+    groups.forEach(([group, recurring, names]) => names.forEach((name) => streams.push({ id: "st" + ++n, name, group, recurring, status: "Live" })));
+    const destinations = [
+      ["d1", "Salary · BBVA", ""], ["d2", "TRF · daily expenses", ""], ["d3", "Fácil card · online shopping", ""],
+      ["d4", "Cash", ""], ["d5", "Regina · TRF", "Regina"], ["d6", "Regina · Cash", "Regina"], ["d7", "PR", ""],
+    ].map(([id, name, parent]) => ({ id, name, parent }));
+    return { goal: 5500000, goalDate: "", streams, destinations, entries: {}, allocations: {} };
+  }
   let S = load();
 
   function load() {
     try {
       const raw = localStorage.getItem(KEY);
-      if (raw) return Object.assign(blank(), JSON.parse(raw));
+      if (raw) {
+        const st = Object.assign(blank(), JSON.parse(raw));
+        if (!st.v) { st.v = 2; if (st.isSample) { st.regenSample = true; } }
+        return st;
+      }
     } catch (e) { /* storage unavailable */ }
     return blank();
   }
@@ -67,7 +89,9 @@
   // ---------- metrics ----------
   function monthFlows(key) {
     const tx = S.transactions.filter((t) => ym(t.date) === key);
-    const income = sum(tx.filter((t) => t.kind === "income"), (t) => +t.amount);
+    // The Income module is the source of truth for any month it has entries for.
+    const inc = incomeTotal(key);
+    const income = inc.has ? inc.total : sum(tx.filter((t) => t.kind === "income"), (t) => +t.amount);
     const expense = sum(tx.filter((t) => t.kind === "expense"), (t) => +t.amount);
     return { income, expense, net: income - expense };
   }
@@ -115,7 +139,7 @@
   function niceMax(v) {
     if (v <= 0) return 1;
     const p = Math.pow(10, Math.floor(Math.log10(v)));
-    return [1, 2, 2.5, 5, 10].map((m) => m * p).find((m) => m >= v);
+    return [1, 1.5, 2, 2.5, 3, 4, 5, 6, 7.5, 8, 10].map((m) => m * p).find((m) => m >= v);
   }
   function roundedTopBar(x, y, w, h, r) {
     if (h <= 0) return "";
@@ -266,7 +290,7 @@
     const inc = sum(list.filter((t) => t.kind === "income"), (t) => +t.amount);
     const exp = sum(list.filter((t) => t.kind === "expense"), (t) => +t.amount);
     return `
-      <h1>Income &amp; Spending</h1>
+      <h1>Transactions</h1>
       <p class="sub">Log what comes in and what goes out. Import a bank CSV to save time.</p>
       <div class="card">
         <form class="row" id="txForm">
@@ -479,6 +503,340 @@ ONE DECISION FOR NEXT MONTH
       </div>
     </div>`;
 
+  // ---------- income module ----------
+  const GROUPS = ["Interests", "Cash cows", "Dividends", "Deal building"];
+  const GROUP_COLOR = { "Interests": "var(--s1)", "Cash cows": "var(--s2)", "Dividends": "var(--s3)", "Deal building": "var(--s4)" };
+  const STATUSES = ["Live", "Building", "Idea", "Paused"];
+  const num = (v) => { const n = parseFloat(String(v ?? "").replace(/[^0-9.\-]/g, "")); return isFinite(n) ? n : 0; };
+  const fmtInput = (n) => (n ? Math.round(n * 100) / 100 : "");
+  let incMonth = lastMonths(1)[0];
+  let proposals = null; // photo-read results awaiting confirmation
+
+  function shiftMonth(k, d) {
+    const [y, m] = k.split("-").map(Number); const x = new Date(y, m - 1 + d, 1);
+    return x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0");
+  }
+  function incomeTotal(k) {
+    const e = (S.income && S.income.entries[k]) || {};
+    const ids = Object.keys(e).filter((id) => +e[id]);
+    const by = { total: 0, recurring: 0, has: ids.length > 0, groups: {} };
+    GROUPS.forEach((g) => (by.groups[g] = 0));
+    ids.forEach((id) => {
+      const st = S.income.streams.find((x) => x.id === id); if (!st) return;
+      by.total += +e[id]; by.groups[st.group] = (by.groups[st.group] || 0) + +e[id];
+      if (st.recurring) by.recurring += +e[id];
+    });
+    return by;
+  }
+  function streamVal(k, id) { return +((S.income.entries[k] || {})[id] || 0); }
+  function growth(endKey) {
+    // compound monthly growth over the last up-to-6 months with income
+    const ks = []; for (let i = 5; i >= 0; i--) ks.push(shiftMonth(endKey, -i));
+    const pts = ks.map((k) => incomeTotal(k).total).map((v, i) => [i, v]).filter(([, v]) => v > 0);
+    if (pts.length < 2) return null;
+    const [i0, v0] = pts[0], [i1, v1] = pts[pts.length - 1];
+    return Math.pow(v1 / v0, 1 / (i1 - i0)) - 1;
+  }
+
+  function incomeChart(endKey) {
+    const ks = []; for (let i = 11; i >= 0; i--) ks.push(shiftMonth(endKey, -i));
+    const data = ks.map((k) => ({ k, ...incomeTotal(k) }));
+    const goal = +S.income.goal || 0;
+    const W = 720, H = 260, L = 56, B = 26, T = 18;
+    const max = niceMax(Math.max(goal, ...data.map((d) => d.total)) * 1.05);
+    const plotH = H - B - T, plotW = W - L, step = plotW / ks.length, bw = Math.min(30, step - 12);
+    const y = (v) => T + plotH - (v / max) * plotH;
+    let g = "";
+    for (let i = 0; i <= 4; i++) {
+      const v = (max / 4) * i;
+      g += `<line x1="${L}" x2="${W}" y1="${y(v)}" y2="${y(v)}" stroke="var(--${i ? "grid" : "axis"})"/><text x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${esc(money(v, true))}</text>`;
+    }
+    data.forEach((d, i) => {
+      const x = L + step * i + (step - bw) / 2;
+      let base = 0; const segs = GROUPS.filter((gr) => d.groups[gr] > 0);
+      segs.forEach((gr, si) => {
+        const v = d.groups[gr], top = si === segs.length - 1;
+        const y0 = y(base), y1 = y(base + v); const h = y0 - y1 - (si ? 2 : 0);
+        if (h > 0) g += top ? `<path d="${roundedTopBar(x, y1, bw, h, 4)}" fill="${GROUP_COLOR[gr]}"/>` : `<rect x="${x}" y="${y1}" width="${bw}" height="${h}" fill="${GROUP_COLOR[gr]}"/>`;
+        base += v;
+      });
+      if (d.k === endKey && d.total) g += `<text x="${x + bw / 2}" y="${y(d.total) - 6}" text-anchor="middle" style="fill:var(--ink);font-weight:600">${esc(money(d.total, true))}</text>`;
+      g += `<text x="${x + bw / 2}" y="${H - 8}" text-anchor="middle" ${d.k === endKey ? 'style="fill:var(--ink)"' : ""}>${esc(monthLabel(d.k))}</text>`;
+      const rows = GROUPS.map((gr) => `${gr}: ${esc(money(d.groups[gr]))}`).join("<br>");
+      g += `<rect x="${L + step * i}" y="${T}" width="${step}" height="${plotH}" fill="transparent" data-tip="<b>${esc(monthLabel(d.k))}</b> · ${esc(money(d.total))}<br>${rows}<br>${goal ? pct(d.total / goal) + " of goal" : ""}"/>`;
+    });
+    if (goal) g += `<line x1="${L}" x2="${W}" y1="${y(goal)}" y2="${y(goal)}" stroke="var(--ink)" stroke-dasharray="4 4" stroke-width="1"/><text x="${W}" y="${y(goal) - 6}" text-anchor="end" style="fill:var(--ink)">Goal ${esc(money(goal, true))}/mo</text>`;
+    return `<div class="legend" style="flex-wrap:wrap">${GROUPS.map((gr) => `<span><i style="background:${GROUP_COLOR[gr]}"></i>${gr}</span>`).join("")}</div>
+      <div class="chart-scroll"><svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Monthly income by group against goal">${g}</svg></div>`;
+  }
+
+  views.income = () => {
+    const I = S.income, k = incomeMonthSafe(), prevK = shiftMonth(k, -1);
+    const cur = incomeTotal(k), prev = incomeTotal(prevK);
+    const goal = +I.goal || 0, gap = Math.max(0, goal - cur.total);
+    const gr = growth(k);
+    let proj = "Needs two months of data";
+    if (gr != null && cur.total >= goal) proj = "Goal reached";
+    else if (gr != null && gr > 0 && cur.total > 0) { const n = Math.ceil(Math.log(goal / cur.total) / Math.log(1 + gr)); proj = `${monthLabel(shiftMonth(k, n))} (${n} mo)`; }
+    else if (gr != null) proj = "Not at this pace";
+    let need = "";
+    if (I.goalDate && cur.total > 0 && cur.total < goal) {
+      const n = Math.max(1, monthsBetween(k + "-01", I.goalDate));
+      const req = Math.pow(goal / cur.total, 1 / n) - 1;
+      need = `To hit it by ${esc(I.goalDate)} you need ${pct(req)} growth every month${gr != null ? `, you are doing ${pct(gr)}` : ""}.`;
+    }
+    const mom = prev.total ? cur.total / prev.total - 1 : NaN;
+    const pipeline = I.streams.filter((s) => s.status === "Building" || s.status === "Idea");
+    const tiles = [
+      ["Income " + monthLabel(k), money(cur.total), isFinite(mom) ? `${mom >= 0 ? "+" : ""}${pct(mom)} vs ${monthLabel(prevK)}` : "No prior month", isFinite(mom) ? (mom >= 0 ? "pos" : "neg") : ""],
+      ["Progress to goal", pct(goal ? cur.total / goal : NaN), `Gap ${money(gap)}`, ""],
+      ["Monthly growth (6 mo)", gr == null ? "–" : pct(gr), `Goal reached: ${proj}`, gr != null && gr < 0 ? "neg" : ""],
+      ["Recurring share", pct(cur.total ? cur.recurring / cur.total : NaN), `${money(cur.recurring)} excl. deal building`, ""],
+    ];
+
+    const groupRows = GROUPS.map((g) => {
+      const list = I.streams.filter((s) => s.group === g && s.status !== "Archived");
+      const gt = cur.groups[g] || 0, gp = prev.groups[g] || 0;
+      return `<tbody class="grp">
+        <tr class="grp-head"><th><i class="dot" style="background:${GROUP_COLOR[g]}"></i>${g} <span class="muted">${list[0] && !list[0].recurring ? "· one-off" : ""}</span></th>
+          <th class="num">${esc(money(gt))}</th><th class="num prevcol muted">${gp ? esc(money(gp, true)) : ""}</th><th class="num ${gt >= gp ? "pos" : "neg"}">${gp ? (gt >= gp ? "+" : "") + pct(gt / gp - 1) : ""}</th></tr>
+        ${list.map((s) => {
+          const v = streamVal(k, s.id), pv = streamVal(prevK, s.id), ch = pv ? v / pv - 1 : NaN;
+          return `<tr><td>${esc(s.name)}${s.status !== "Live" ? ` <span class="tag">${esc(s.status)}</span>` : ""}</td>
+            <td class="num"><input class="amt-in" inputmode="decimal" data-stream="${s.id}" value="${fmtInput(v)}" placeholder="0"></td>
+            <td class="num muted prevcol">${pv ? esc(money(pv, true)) : "–"}</td>
+            <td class="num ${isFinite(ch) ? (ch >= 0 ? "pos" : "neg") : ""}">${isFinite(ch) ? (ch >= 0 ? "+" : "") + pct(ch) : ""}</td></tr>`;
+        }).join("")}
+      </tbody>`;
+    }).join("");
+
+    const alloc = I.allocations[k] || {};
+    const allocTotal = sum(Object.values(alloc), (v) => +v || 0);
+    const unassigned = cur.total - allocTotal;
+    const destRows = I.destinations.map((d) => `<tr><td>${esc(d.name)}</td>
+      <td class="num"><input class="amt-in" inputmode="decimal" data-dest="${d.id}" value="${fmtInput(+alloc[d.id] || 0)}" placeholder="0"></td>
+      <td class="num muted">${cur.total && alloc[d.id] ? pct(+alloc[d.id] / cur.total) : ""}</td>
+      <td><button class="link" data-del-dest="${d.id}" aria-label="Remove">✕</button></td></tr>`).join("");
+    const regina = sum(I.destinations.filter((d) => d.parent === "Regina"), (d) => +alloc[d.id] || 0);
+
+    return `
+      <h1>Income</h1>
+      <p class="sub">Every stream, every month, against a ${esc(money(goal))} monthly target. Grow the live ones, build new ones.</p>
+      <div class="month-nav">
+        <button data-mshift="-1" aria-label="Previous month">‹</button>
+        <input type="month" id="incMonth" value="${k}">
+        <button data-mshift="1" aria-label="Next month">›</button>
+      </div>
+      <div class="grid">
+        ${tiles.map(([l, v, h, c]) => `<div class="card tile span-3"><div class="label">${l}</div><div class="value">${v}</div><div class="hint ${c}">${h}</div></div>`).join("")}
+        <div class="card span-8"><h2>Monthly income vs goal</h2>${incomeChart(k)}
+          <div class="goal" style="margin-bottom:0"><div class="bars"><div class="track" style="height:12px" data-tip="${esc(money(cur.total))} of ${esc(money(goal))}"><div class="fill" style="width:${goal ? Math.min(100, (cur.total / goal) * 100) : 0}%"></div></div></div>
+          <div class="meta">${esc(money(cur.total))} of ${esc(money(goal))} in ${esc(monthLabel(k))}. ${need}</div></div>
+        </div>
+        <div class="card span-4"><h2>Read from photos</h2>
+          <p class="sub" style="margin-bottom:10px">Upload screenshots or photos of statements, transfer receipts or WhatsApp confirmations. Claude reads them and proposes entries. Nothing is saved until you confirm.</p>
+          <div id="photoBox"><p class="empty">Photo reading works when this page is opened on claude.ai.</p></div>
+          <div id="proposals">${proposalsHtml()}</div>
+        </div>
+        <div class="card span-8"><div class="card-head"><h2>Streams · ${esc(monthLabel(k))}</h2>
+            <span><button id="copyPrev">Copy ${esc(monthLabel(prevK))}</button> <button class="primary" id="saveInc">Save month</button></span></div>
+          <div class="table-wrap"><table class="inc-table">
+            <thead><tr><th>Stream</th><th class="num">${esc(monthLabel(k))}</th><th class="num prevcol">${esc(monthLabel(prevK))}</th><th class="num">Change</th></tr></thead>
+            ${groupRows}
+            <tfoot><tr><th>Total</th><th class="num" id="incTotal">${esc(money(cur.total))}</th><th class="num prevcol">${esc(money(prev.total))}</th><th class="num">${isFinite(mom) ? pct(mom) : ""}</th></tr></tfoot>
+          </table></div>
+          <p class="saved-note" id="incDirty" hidden>Unsaved changes</p>
+        </div>
+        <div class="card span-4"><h2>Distribution · ${esc(monthLabel(k))}</h2>
+          <div class="table-wrap"><table>${destRows}
+            <tfoot>
+              <tr><th>Distributed</th><th class="num" id="allocTotal">${esc(money(allocTotal))}</th><th></th><th></th></tr>
+              <tr><th>Unassigned</th><th class="num ${unassigned < 0 ? "neg" : ""}" id="allocLeft">${esc(money(unassigned))}</th><th></th><th></th></tr>
+              ${regina ? `<tr><td class="muted">Regina total</td><td class="num muted">${esc(money(regina))}</td><td></td><td></td></tr>` : ""}
+            </tfoot></table></div>
+          <form class="row" id="destForm" style="margin-top:12px">
+            <label class="f" style="flex:1">New destination<input name="name" placeholder="e.g. Savings · GBM" required></label>
+            <button>Add</button>
+          </form>
+          <p><button class="primary" id="saveAlloc">Save distribution</button></p>
+        </div>
+        <div class="card span-12"><h2>Stream pipeline</h2>
+          <p class="sub" style="margin-bottom:10px">${I.streams.filter((s) => s.status === "Live").length} live · ${pipeline.length} being built. Mark one-off streams so they don't inflate your recurring number.</p>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Stream</th><th>Group</th><th>Status</th><th>Recurring</th><th class="num">3-mo avg</th><th></th></tr></thead>
+            <tbody>${I.streams.filter((s) => s.status !== "Archived").map((s) => {
+              const avg = (streamVal(k, s.id) + streamVal(prevK, s.id) + streamVal(shiftMonth(k, -2), s.id)) / 3;
+              return `<tr><td>${esc(s.name)}</td><td>${esc(s.group)}</td>
+                <td><select data-st-status="${s.id}">${STATUSES.map((x) => `<option ${s.status === x ? "selected" : ""}>${x}</option>`).join("")}</select></td>
+                <td><input type="checkbox" data-st-rec="${s.id}" ${s.recurring ? "checked" : ""} aria-label="Recurring"></td>
+                <td class="num">${avg ? esc(money(avg, true)) : "–"}</td>
+                <td><button class="link" data-archive="${s.id}" aria-label="Archive">✕</button></td></tr>`;
+            }).join("")}</tbody></table></div>
+          <form class="row" id="streamForm" style="margin-top:12px">
+            <label class="f">New stream<input name="name" placeholder="Name" required></label>
+            <label class="f">Group<select name="group">${GROUPS.map((g) => `<option>${g}</option>`).join("")}</select></label>
+            <label class="f">Status<select name="status">${STATUSES.map((x) => `<option ${x === "Building" ? "selected" : ""}>${x}</option>`).join("")}</select></label>
+            <button>Add stream</button>
+          </form>
+          <form class="row" id="goalForm">
+            <label class="f">Monthly income goal<input name="goal" inputmode="decimal" value="${goal}"></label>
+            <label class="f">Reach it by<input type="date" name="goalDate" value="${esc(I.goalDate || "")}"></label>
+            <button>Update goal</button>
+          </form>
+        </div>
+      </div>`;
+  };
+  function incomeMonthSafe() { return /^\d{4}-\d{2}$/.test(incMonth) ? incMonth : lastMonths(1)[0]; }
+
+  function proposalsHtml() {
+    if (!proposals) return "";
+    if (proposals.error) return `<div class="insight warn">${esc(proposals.error)}</div>`;
+    if (!proposals.items.length) return `<p class="empty">No amounts found in those images.</p>`;
+    const opts = (sel) => `<option value="">Skip</option>
+      <optgroup label="Income stream">${S.income.streams.filter((s) => s.status !== "Archived").map((s) => `<option value="s:${s.id}" ${sel === "s:" + s.id ? "selected" : ""}>${esc(s.group)} · ${esc(s.name)}</option>`).join("")}</optgroup>
+      <optgroup label="Distribution">${S.income.destinations.map((d) => `<option value="d:${d.id}" ${sel === "d:" + d.id ? "selected" : ""}>${esc(d.name)}</option>`).join("")}</optgroup>`;
+    return `<div class="prop-list">${proposals.items.map((p, i) => `
+      <div class="prop">
+        <div class="muted" style="font-size:12px">${esc(p.date || "")} ${esc(p.label || "")}${p.note ? " · " + esc(p.note) : ""}</div>
+        <div class="prop-row"><select data-prop-map="${i}">${opts(p.map)}</select>
+        <input class="amt-in" inputmode="decimal" data-prop-amt="${i}" value="${fmtInput(p.amount)}"></div>
+      </div>`).join("")}
+      <p class="muted" style="font-size:12px">Amounts are added to ${esc(monthLabel(incomeMonthSafe()))}${proposals.month && proposals.month !== incomeMonthSafe() ? `. The images look like ${esc(monthLabel(proposals.month))}: <button class="link" id="propMonth" style="color:var(--s1)">switch month</button>` : ""}.</p>
+      <p style="display:flex;gap:8px"><button class="primary" id="propApply">Add to month</button><button id="propClear">Discard</button></p></div>`;
+  }
+
+  let samplePromise = null;
+  function getSample() {
+    if (!samplePromise) samplePromise = (window.claude && window.claude.use ? window.claude.use("sample") : Promise.resolve(null)).catch(() => null);
+    return samplePromise;
+  }
+  async function mountPhotoBox() {
+    const box = $("#photoBox"); if (!box) return;
+    const sample = await getSample();
+    const caps = sample ? await sample.limits().catch(() => null) : null;
+    if (!$("#photoBox")) return;
+    if (!sample || !caps || !caps.images) return;
+    $("#photoBox").innerHTML = `
+      <label class="drop"><input type="file" id="photoIn" accept="${esc(caps.images.mediaTypes.join(","))}" multiple hidden>
+        <span>Choose photos or screenshots</span><small id="photoCount">Up to ${caps.images.maxCount} at a time</small></label>
+      <p style="display:flex;gap:8px;align-items:center"><button class="primary" id="photoRead" disabled>Read with Claude</button><button id="photoStop" hidden>Stop</button><span class="muted" id="photoStatus"></span></p>`;
+    const inp = $("#photoIn"), btn = $("#photoRead");
+    inp.onchange = () => { $("#photoCount").textContent = inp.files.length ? `${inp.files.length} selected` : ""; btn.disabled = !inp.files.length; };
+    let ctl = null;
+    $("#photoStop").onclick = () => ctl && ctl.abort();
+    btn.onclick = async () => {
+      const files = [...inp.files].slice(0, caps.images.maxCount);
+      if (!files.length) return;
+      ctl = new AbortController();
+      btn.disabled = true; $("#photoStop").hidden = false; $("#photoStatus").textContent = "Reading…";
+      const streams = S.income.streams.filter((s) => s.status !== "Archived").map((s) => `${s.id}: ${s.group} / ${s.name}`).join("\n");
+      const dests = S.income.destinations.map((d) => `${d.id}: ${d.name}`).join("\n");
+      const prompt = `These images are bank statements, transfer receipts or payment confirmations (Mexico, amounts in ${S.settings.currency}).
+Extract every money movement you can read. Classify each as:
+- "income": money received from one of the income streams below, or
+- "distribution": money sent from the owner to one of the destinations below.
+Match by company or person name, bank concept or reference. If unsure, set match_id to null.
+
+Income streams:
+${streams}
+
+Distribution destinations:
+${dests}
+
+Reply with only JSON in this shape:
+{"month":"YYYY-MM or null","items":[{"type":"income|distribution","match_id":"st3 or d2 or null","label":"name or concept as written","amount":12345.67,"date":"YYYY-MM-DD or null","note":"short, e.g. bank or reference"}]}
+Amounts are positive numbers without currency symbols. Do not invent items you cannot read.`;
+      try {
+        const out = await sample.json(prompt, { images: files, signal: ctl.signal });
+        const items = (out && Array.isArray(out.items) ? out.items : []).map((x) => {
+          const id = x && x.match_id ? String(x.match_id) : "";
+          const map = S.income.streams.some((s) => s.id === id) ? "s:" + id : S.income.destinations.some((d) => d.id === id) ? "d:" + id : "";
+          return { map, amount: num(x && x.amount), label: String((x && x.label) || ""), date: String((x && x.date) || ""), note: String((x && x.note) || "") };
+        }).filter((x) => x.amount > 0);
+        proposals = { items, month: out && /^\d{4}-\d{2}$/.test(out.month || "") ? out.month : null };
+      } catch (e) {
+        const msg = {
+          cancelled: null, not_granted: "Claude access was not allowed for this page.", rate_limited: "Too many requests right now. Try again in a minute.",
+          image_rejected: "One of the images could not be read. Try a clearer photo or a screenshot.", invalid_json: "Claude's answer could not be read. Try again.",
+          refused: "Claude declined to read these images.", session_expired: "Sign in to claude.ai again.",
+        }[e && e.code];
+        proposals = msg === null ? null : { error: msg || "Something went wrong reading the images. Try again." };
+      }
+      render();
+    };
+  }
+
+  let incAbort = null;
+  function wireIncome() {
+    if (incAbort) incAbort.abort();
+    incAbort = new AbortController();
+    const sig = { signal: incAbort.signal };
+    const I = S.income, k = incomeMonthSafe();
+    let dirtyInc = false, dirtyAlloc = false;
+    $("#incMonth").onchange = (e) => { if (e.target.value) { incMonth = e.target.value; render(); } };
+    const totalIn = () => sum([...document.querySelectorAll("[data-stream]")], (el) => num(el.value));
+    const allocIn = () => sum([...document.querySelectorAll("[data-dest]")], (el) => num(el.value));
+    $("#view").addEventListener("input", (e) => {
+      const t = e.target;
+      if (t.dataset.stream) {
+        dirtyInc = true; $("#incDirty").hidden = false;
+        $("#incTotal").textContent = money(totalIn());
+        $("#allocLeft").textContent = money(totalIn() - allocIn());
+      }
+      if (t.dataset.dest) { dirtyAlloc = true; $("#allocTotal").textContent = money(allocIn()); $("#allocLeft").textContent = money(totalIn() - allocIn()); }
+    }, sig);
+    const saveInc = () => {
+      const e = {}; document.querySelectorAll("[data-stream]").forEach((el) => { const v = num(el.value); if (v) e[el.dataset.stream] = v; });
+      I.entries[k] = e; dirtyInc = false;
+    };
+    const saveAlloc = () => {
+      const a = {}; document.querySelectorAll("[data-dest]").forEach((el) => { const v = num(el.value); if (v) a[el.dataset.dest] = v; });
+      I.allocations[k] = a; dirtyAlloc = false;
+    };
+    // keep unsaved typing when another action re-renders
+    const keep = () => { if (dirtyInc) saveInc(); if (dirtyAlloc) saveAlloc(); };
+    $("#saveInc").onclick = () => { saveInc(); commit(); };
+    $("#saveAlloc").onclick = () => { saveAlloc(); commit(); };
+    $("#copyPrev").onclick = () => {
+      const p = I.entries[shiftMonth(k, -1)] || {};
+      document.querySelectorAll("[data-stream]").forEach((el) => { if (!num(el.value) && p[el.dataset.stream]) el.value = fmtInput(p[el.dataset.stream]); });
+      dirtyInc = true; $("#incDirty").hidden = false; $("#incTotal").textContent = money(totalIn());
+    };
+    $("#view").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-mshift],[data-archive],[data-del-dest],#propApply,#propClear,#propMonth"); if (!b) return;
+      if (b.dataset.mshift) { keep(); save(); incMonth = shiftMonth(k, +b.dataset.mshift); render(); }
+      if (b.dataset.archive && confirm("Archive this stream? Its history is kept.")) { keep(); I.streams.find((s) => s.id === b.dataset.archive).status = "Archived"; commit(); }
+      if (b.dataset.delDest && confirm("Remove this destination?")) { keep(); I.destinations = I.destinations.filter((d) => d.id !== b.dataset.delDest); commit(); }
+      if (b.id === "propMonth") { keep(); save(); incMonth = proposals.month; render(); }
+      if (b.id === "propClear") { proposals = null; render(); }
+      if (b.id === "propApply") {
+        keep();
+        const e2 = I.entries[k] = I.entries[k] || {}, a2 = I.allocations[k] = I.allocations[k] || {};
+        proposals.items.forEach((p, i) => {
+          const map = $(`[data-prop-map="${i}"]`).value, amt = num($(`[data-prop-amt="${i}"]`).value);
+          if (!map || !amt) return;
+          const [t, id] = map.split(":");
+          if (t === "s") e2[id] = (+e2[id] || 0) + amt; else a2[id] = (+a2[id] || 0) + amt;
+        });
+        proposals = null; commit();
+      }
+    }, sig);
+    $("#view").addEventListener("change", (e) => {
+      const t = e.target;
+      if (t.dataset.stStatus) { keep(); I.streams.find((s) => s.id === t.dataset.stStatus).status = t.value; commit(); }
+      if (t.dataset.stRec) { keep(); I.streams.find((s) => s.id === t.dataset.stRec).recurring = t.checked; commit(); }
+    }, sig);
+    $("#streamForm").onsubmit = (e) => {
+      e.preventDefault(); keep(); const x = formData(e.target);
+      I.streams.push({ id: "st" + uid(), name: x.name, group: x.group, status: x.status, recurring: x.group !== "Deal building" });
+      commit();
+    };
+    $("#destForm").onsubmit = (e) => { e.preventDefault(); keep(); I.destinations.push({ id: "d" + uid(), name: formData(e.target).name, parent: "" }); commit(); };
+    $("#goalForm").onsubmit = (e) => { e.preventDefault(); keep(); const x = formData(e.target); I.goal = num(x.goal) || I.goal; I.goalDate = x.goalDate; commit(); };
+    window.onbeforeunload = () => { if (dirtyInc || dirtyAlloc) { keep(); save(); } };
+    mountPhotoBox();
+  }
+
   // ---------- render + events ----------
   function render() {
     const route = (location.hash || "#dashboard").slice(1);
@@ -494,6 +852,7 @@ ONE DECISION FOR NEXT MONTH
   const commit = () => { save(); render(); };
 
   function wire(route) {
+    if (incAbort && route !== "income") { incAbort.abort(); incAbort = null; window.onbeforeunload = null; }
     const v = $("#view");
     v.onclick = (e) => {
       const b = e.target.closest("button, [data-m], [data-nt]"); if (!b) return;
@@ -510,6 +869,7 @@ ONE DECISION FOR NEXT MONTH
       if (d.editNote) { const n = S.notes.find((a) => a.id === d.editNote); fill($("#noteForm"), { ...n, tags: (n.tags || []).join(", ") }); toggleLens(); }
     };
 
+    if (route === "income") wireIncome();
     if (route === "flows") {
       const kind = $("#kindSel"), cat = $("#catSel");
       kind.onchange = () => (cat.innerHTML = (kind.value === "income" ? INCOME_CATS : EXPENSE_CATS).map((c) => `<option>${c}</option>`).join(""));
@@ -638,12 +998,19 @@ ONE DECISION FOR NEXT MONTH
         lens_contrarian: "Round is led by an insider. No new lead validated price.", lens_first: "Is revenue retention above 110%? That is the only number that matters at this stage.", lens_expansion: "If they own the category, this is a 20x position.", lens_outsider: "Why put more into one bet when you already have nine?", lens_executor: "Ask founder for cohort data by Friday, decide by the 20th." },
       { id: uid(), type: "Lesson", date: months[5] + "-20", title: "Selling winners early cost me more than losers", body: "Trimmed my best performer at 3x for 'discipline'. It went to 9x. Rebalance by rules, not by nerves.", tags: ["behavior"] },
     ];
+    const FX = 18; // sample written in USD-sized amounts, shown in pesos
+    s.transactions.forEach((t) => (t.amount *= FX));
+    s.accounts.forEach((a) => { a.value *= FX; if (a.cost) a.cost *= FX; });
+    s.snapshots.forEach((x) => (x.value *= FX));
+    s.goals.forEach((g) => { g.target *= FX; g.current = (g.current || 0) * FX; g.monthly *= FX; });
+    s.notes.forEach((x) => { if (x.stake) x.stake *= FX; });
     return s;
   }
 
   // boot
   try { applyTheme(localStorage.getItem("fsb.theme") || ""); } catch (e) { /* ignore */ }
   window.addEventListener("hashchange", render);
+  if (S.regenSample) { S = sample(); S.isSample = true; save(); }
   if (!S.transactions.length && !S.accounts.length && !S.notes.length && !S.goals.length) {
     // first visit: show sample so the dashboard is not empty; erase in Settings
     S = sample(); S.isSample = true; save();

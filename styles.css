@@ -11,6 +11,7 @@
   --s1: #2a78d6;   /* income / primary series */
   --s2: #eb6834;   /* expenses */
   --s3: #1baf7a;
+  --s4: #eda100;
   --good: #0ca30c;
   --good-text: #006300;
   --warning: #fab219;
@@ -30,6 +31,7 @@
     --s1: #3987e5;
     --s2: #d95926;
     --s3: #199e70;
+    --s4: #c98500;
     --good-text: #0ca30c;
     --accent-soft: #184f95;
   }
@@ -155,3 +157,29 @@ svg text { fill: var(--muted); font-size: 11px; font-family: inherit; }
 .insight { padding: 10px 12px; border-left: 3px solid var(--s1); background: var(--page); border-radius: 0 8px 8px 0; margin: 8px 0; font-size: 14px; }
 .insight.warn { border-left-color: var(--critical); }
 details summary { cursor: pointer; color: var(--ink-2); font-size: 14px; margin: 8px 0; }
+
+/* income module */
+.muted { color: var(--muted); }
+.month-nav { display: flex; gap: 6px; align-items: center; margin: -8px 0 16px; }
+.month-nav button { padding: 6px 12px; font-size: 16px; line-height: 1; }
+.card-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+.card-head h2 { margin: 0; }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 8px; vertical-align: -1px; }
+.inc-table .grp-head th { color: var(--ink); font-weight: 600; padding-top: 16px; }
+.inc-table tfoot th { color: var(--ink); font-weight: 650; border-bottom: 0; }
+input.amt-in { width: 130px; text-align: right; font-variant-numeric: tabular-nums; padding: 5px 8px; }
+.drop { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 18px; border: 1.5px dashed var(--axis); border-radius: 10px; cursor: pointer; color: var(--ink-2); text-align: center; }
+.drop small { color: var(--muted); }
+.prop { border-top: 1px solid var(--grid); padding: 8px 0; }
+.prop-row { display: flex; gap: 6px; margin-top: 4px; }
+.prop-row select { flex: 1; min-width: 0; }
+.prop-row input.amt-in { width: 110px; }
+.saved-note { color: var(--critical); font-size: 13px; margin: 8px 0 0; }
+@media (max-width: 520px) {
+  input.amt-in { width: 104px; }
+  .inc-table .prevcol { display: none; }
+  .bars .bar-row { grid-template-columns: 96px 1fr 60px; }
+}
+.tile .value { font-size: clamp(18px, 5vw, 26px); overflow-wrap: anywhere; }
+.chart-scroll { overflow-x: auto; }
+.chart-scroll svg.chart { min-width: 560px; }

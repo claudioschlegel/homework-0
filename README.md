@@ -5,7 +5,8 @@ A private dashboard and thinking space for your money. Open `index.html` in a br
 ## What's inside
 
 - **Dashboard**: net worth, this month's net, savings rate YTD, cash runway, 12-month cash flow, net worth history, spending by category, asset allocation, goal progress and a "Needs attention" list that flags runway gaps, savings rate drops, category spikes, concentration and goals falling behind.
-- **Income & Spending**: log transactions or import a bank CSV (`date, description, amount, category`, negative = spending).
+- **Income**: every income stream grouped into Interests, Cash cows, Dividends and Deal building, entered month by month against a MXN 5.5M monthly goal. Shows growth, projected month to reach the goal, the growth rate needed by a target date, recurring vs one-off share, a stream pipeline (Live, Building, Idea, Paused) and how each month's income is distributed (BBVA salary, TRF daily, Fácil card, cash, Regina, PR). On claude.ai you can upload photos or screenshots of statements and Claude proposes the entries for you to confirm.
+- **Transactions**: log spending or import a bank CSV (`date, description, amount, category`, negative = spending).
 - **Investments & Accounts**: cash, brokerage, retirement, private/angel, real estate, crypto and debt, with cost basis and unrealized gains. Take a snapshot each month to build net worth history.
 - **Goals**: target, deadline, monthly plan and the reason it matters. Link a goal to an account and progress updates itself.
 - **Second Brain**: principles, decisions, lessons, ideas and monthly reviews, all searchable and tagged. Decisions run through a five-lens advisory council (Contrarian, First principles, Expansionist, Outsider, Executor) and carry an amount at stake, confidence and a review date. The monthly review template pre-fills last month's numbers.
