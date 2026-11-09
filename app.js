@@ -54,6 +54,7 @@
   }
   function save() {
     try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* ignore */ }
+    if (typeof cloudPush === "function") cloudPush();
   }
   const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -508,7 +509,7 @@ ONE DECISION FOR NEXT MONTH
   const GROUP_COLOR = { "Interests": "var(--s1)", "Cash cows": "var(--s2)", "Dividends": "var(--s3)", "Deal building": "var(--s4)" };
   const STATUSES = ["Live", "Building", "Idea", "Paused"];
   const num = (v) => { const n = parseFloat(String(v ?? "").replace(/[^0-9.\-]/g, "")); return isFinite(n) ? n : 0; };
-  const fmtInput = (n) => (n ? Math.round(n * 100) / 100 : "");
+  const fmtInput = (n) => (n ? (Math.round(n * 100) / 100).toLocaleString("en-US", { maximumFractionDigits: 2 }) : "");
   let incMonth = lastMonths(1)[0];
   let proposals = null; // photo-read results awaiting confirmation
 
@@ -542,7 +543,7 @@ ONE DECISION FOR NEXT MONTH
     const ks = []; for (let i = 11; i >= 0; i--) ks.push(shiftMonth(endKey, -i));
     const data = ks.map((k) => ({ k, ...incomeTotal(k) }));
     const goal = +S.income.goal || 0;
-    const W = 720, H = 260, L = 56, B = 26, T = 18;
+    const W = 1040, H = 280, L = 70, B = 26, T = 18;
     const max = niceMax(Math.max(goal, ...data.map((d) => d.total)) * 1.05);
     const plotH = H - B - T, plotW = W - L, step = plotW / ks.length, bw = Math.min(30, step - 12);
     const y = (v) => T + plotH - (v / max) * plotH;
@@ -574,7 +575,8 @@ ONE DECISION FOR NEXT MONTH
     const I = S.income, k = incomeMonthSafe(), prevK = shiftMonth(k, -1);
     const cur = incomeTotal(k), prev = incomeTotal(prevK);
     const goal = +I.goal || 0, gap = Math.max(0, goal - cur.total);
-    const gr = growth(k);
+    const inProgress = k === lastMonths(1)[0];
+    const gr = growth(inProgress ? prevK : k);
     let proj = "Needs two months of data";
     if (gr != null && cur.total >= goal) proj = "Goal reached";
     else if (gr != null && gr > 0 && cur.total > 0) { const n = Math.ceil(Math.log(goal / cur.total) / Math.log(1 + gr)); proj = `${monthLabel(shiftMonth(k, n))} (${n} mo)`; }
@@ -588,10 +590,9 @@ ONE DECISION FOR NEXT MONTH
     const mom = prev.total ? cur.total / prev.total - 1 : NaN;
     const pipeline = I.streams.filter((s) => s.status === "Building" || s.status === "Idea");
     const tiles = [
-      ["Income " + monthLabel(k), money(cur.total), isFinite(mom) ? `${mom >= 0 ? "+" : ""}${pct(mom)} vs ${monthLabel(prevK)}` : "No prior month", isFinite(mom) ? (mom >= 0 ? "pos" : "neg") : ""],
+      ["Income " + monthLabel(k) + (inProgress ? " so far" : ""), money(cur.total), inProgress ? `${money(prev.total)} in ${monthLabel(prevK)}` : isFinite(mom) ? `${mom >= 0 ? "+" : ""}${pct(mom)} vs ${monthLabel(prevK)}` : "No prior month", !inProgress && isFinite(mom) ? (mom >= 0 ? "pos" : "neg") : ""],
       ["Progress to goal", pct(goal ? cur.total / goal : NaN), `Gap ${money(gap)}`, ""],
-      ["Monthly growth (6 mo)", gr == null ? "–" : pct(gr), `Goal reached: ${proj}`, gr != null && gr < 0 ? "neg" : ""],
-      ["Recurring share", pct(cur.total ? cur.recurring / cur.total : NaN), `${money(cur.recurring)} excl. deal building`, ""],
+      ["Monthly growth", gr == null ? "–" : pct(gr), gr == null ? "Needs two full months" : `Goal reached: ${proj}`, gr != null && gr < 0 ? "neg" : ""],
     ];
 
     const groupRows = GROUPS.map((g) => {
@@ -602,7 +603,8 @@ ONE DECISION FOR NEXT MONTH
           <th class="num">${esc(money(gt))}</th><th class="num prevcol muted">${gp ? esc(money(gp, true)) : ""}</th><th class="num ${gt >= gp ? "pos" : "neg"}">${gp ? (gt >= gp ? "+" : "") + pct(gt / gp - 1) : ""}</th></tr>
         ${list.map((s) => {
           const v = streamVal(k, s.id), pv = streamVal(prevK, s.id), ch = pv ? v / pv - 1 : NaN;
-          return `<tr><td>${esc(s.name)}${s.status !== "Live" ? ` <span class="tag">${esc(s.status)}</span>` : ""}</td>
+          const nt = ((I.notes || {})[k] || {})[s.id];
+          return `<tr><td>${esc(s.name)}${s.status !== "Live" ? ` <span class="tag">${esc(s.status)}</span>` : ""}${nt ? `<div class="row-note">${esc(nt)}</div>` : ""}</td>
             <td class="num"><input class="amt-in" inputmode="decimal" data-stream="${s.id}" value="${fmtInput(v)}" placeholder="0"></td>
             <td class="num muted prevcol">${pv ? esc(money(pv, true)) : "–"}</td>
             <td class="num ${isFinite(ch) ? (ch >= 0 ? "pos" : "neg") : ""}">${isFinite(ch) ? (ch >= 0 ? "+" : "") + pct(ch) : ""}</td></tr>`;
@@ -628,17 +630,17 @@ ONE DECISION FOR NEXT MONTH
         <button data-mshift="1" aria-label="Next month">›</button>
       </div>
       <div class="grid">
-        ${tiles.map(([l, v, h, c]) => `<div class="card tile span-3"><div class="label">${l}</div><div class="value">${v}</div><div class="hint ${c}">${h}</div></div>`).join("")}
-        <div class="card span-8"><h2>Monthly income vs goal</h2>${incomeChart(k)}
+        ${tiles.map(([l, v, h, c]) => `<div class="card tile span-4"><div class="label">${l}</div><div class="value">${v}</div><div class="hint ${c}">${h}</div></div>`).join("")}
+        <div class="card span-12"><h2>Monthly income vs goal</h2>${incomeChart(k)}
           <div class="goal" style="margin-bottom:0"><div class="bars"><div class="track" style="height:12px" data-tip="${esc(money(cur.total))} of ${esc(money(goal))}"><div class="fill" style="width:${goal ? Math.min(100, (cur.total / goal) * 100) : 0}%"></div></div></div>
           <div class="meta">${esc(money(cur.total))} of ${esc(money(goal))} in ${esc(monthLabel(k))}. ${need}</div></div>
         </div>
-        <div class="card span-4"><h2>Read from photos</h2>
+        <details class="card span-12 fold" ${proposals ? "open" : ""}><summary><h2>Add from photos</h2></summary>
           <p class="sub" style="margin-bottom:10px">Upload screenshots or photos of statements, transfer receipts or WhatsApp confirmations. Claude reads them and proposes entries. Nothing is saved until you confirm.</p>
           <div id="photoBox"><p class="empty">Photo reading works when this page is opened on claude.ai.</p></div>
           <div id="proposals">${proposalsHtml()}</div>
-        </div>
-        <div class="card span-8"><div class="card-head"><h2>Streams · ${esc(monthLabel(k))}</h2>
+        </details>
+        <div class="card span-12"><div class="card-head"><h2>Streams · ${esc(monthLabel(k))}</h2>
             <span><button id="copyPrev">Copy ${esc(monthLabel(prevK))}</button> <button class="primary" id="saveInc">Save month</button></span></div>
           <div class="table-wrap"><table class="inc-table">
             <thead><tr><th>Stream</th><th class="num">${esc(monthLabel(k))}</th><th class="num prevcol">${esc(monthLabel(prevK))}</th><th class="num">Change</th></tr></thead>
@@ -647,7 +649,7 @@ ONE DECISION FOR NEXT MONTH
           </table></div>
           <p class="saved-note" id="incDirty" hidden>Unsaved changes</p>
         </div>
-        <div class="card span-4"><h2>Distribution · ${esc(monthLabel(k))}</h2>
+        <details class="card span-12 fold"><summary><h2>Distribution · ${esc(monthLabel(k))} <span class="muted" style="font-weight:400">${esc(money(allocTotal))} of ${esc(money(cur.total))}</span></h2></summary>
           <div class="table-wrap"><table>${destRows}
             <tfoot>
               <tr><th>Distributed</th><th class="num" id="allocTotal">${esc(money(allocTotal))}</th><th></th><th></th></tr>
@@ -659,8 +661,8 @@ ONE DECISION FOR NEXT MONTH
             <button>Add</button>
           </form>
           <p><button class="primary" id="saveAlloc">Save distribution</button></p>
-        </div>
-        <div class="card span-12"><h2>Stream pipeline</h2>
+        </details>
+        <details class="card span-12 fold"><summary><h2>Manage streams &amp; goal</h2></summary>
           <p class="sub" style="margin-bottom:10px">${I.streams.filter((s) => s.status === "Live").length} live · ${pipeline.length} being built. Mark one-off streams so they don't inflate your recurring number.</p>
           <div class="table-wrap"><table>
             <thead><tr><th>Stream</th><th>Group</th><th>Status</th><th>Recurring</th><th class="num">3-mo avg</th><th></th></tr></thead>
@@ -683,7 +685,7 @@ ONE DECISION FOR NEXT MONTH
             <label class="f">Reach it by<input type="date" name="goalDate" value="${esc(I.goalDate || "")}"></label>
             <button>Update goal</button>
           </form>
-        </div>
+        </details>
       </div>`;
   };
   function incomeMonthSafe() { return /^\d{4}-\d{2}$/.test(incMonth) ? incMonth : lastMonths(1)[0]; }
@@ -1007,6 +1009,64 @@ Amounts are positive numbers without currency symbols. Do not invent items you c
     return s;
   }
 
+  // ---------- private sync (claude.ai db, owner-only) ----------
+  // Two documents: fsb/income (income module) and fsb/core (everything else).
+  let cloud = null, pushTimer = null, pendingRender = false;
+  const cloudReady = { core: false, income: false }, lastJSON = { core: null, income: null }, chain = { core: Promise.resolve(), income: Promise.resolve() };
+  const parts = () => { const { income, ...core } = S; delete core.isSample; delete core.regenSample; return { core, income }; };
+  function setSync(t) { const el = $("#sync"); if (el) el.textContent = t; }
+  function cloudPush() {
+    if (!cloud) return;
+    clearTimeout(pushTimer);
+    pushTimer = setTimeout(() => {
+      const p = parts();
+      ["core", "income"].forEach((name) => {
+        if (!cloudReady[name]) return;
+        const j = JSON.stringify(p[name]);
+        if (j === lastJSON[name]) return;
+        lastJSON[name] = j;
+        chain[name] = chain[name].then(() => cloud.doc("fsb/" + name).set(JSON.parse(j)))
+          .then(() => setSync("Synced"), () => setSync("Not synced. Changes saved on this device."));
+      });
+    }, 600);
+  }
+  function busyEditing() {
+    const a = document.activeElement;
+    return (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName) && $("#view").contains(a)) || ($("#incDirty") && !$("#incDirty").hidden);
+  }
+  function applyRemote(name, snap) {
+    if (snap.metadata && snap.metadata.hasPendingWrites) return;
+    if (!snap.exists) {
+      if (snap.metadata && snap.metadata.fromCache) return;
+      cloudReady[name] = true;
+      if (name === "core" && S.isSample) { const inc = S.income; S = blank(); S.income = inc; render(); }
+      save(); return;
+    }
+    cloudReady[name] = true;
+    const j = JSON.stringify(snap.data());
+    if (j === lastJSON[name]) return;
+    lastJSON[name] = j;
+    const d = JSON.parse(j);
+    if (name === "income") S.income = Object.assign(incomeSeed(), d);
+    else { const inc = S.income; S = Object.assign(blank(), d); S.income = inc; }
+    lastJSON[name] = JSON.stringify(parts()[name]); // normalized, so an unchanged doc is never rewritten
+    try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* ignore */ }
+    setSync("Synced");
+    if (busyEditing()) pendingRender = true; else render();
+  }
+  async function connectCloud() {
+    if (!window.claude || !window.claude.use) return;
+    let db = null; try { db = await window.claude.use("db"); } catch (e) { db = null; }
+    if (!db) return;
+    cloud = db; setSync("Connecting…");
+    const t = setTimeout(() => setSync("Offline. Changes saved on this device."), 10000);
+    ["core", "income"].forEach((name) => db.doc("fsb/" + name).onSnapshot(
+      (snap) => { if (!snap.metadata || !snap.metadata.fromCache) clearTimeout(t); applyRemote(name, snap); },
+      () => { clearTimeout(t); setSync("Not synced. Changes saved on this device."); }
+    ));
+  }
+  document.addEventListener("focusout", () => setTimeout(() => { if (pendingRender && !busyEditing()) { pendingRender = false; render(); } }, 50));
+
   // boot
   try { applyTheme(localStorage.getItem("fsb.theme") || ""); } catch (e) { /* ignore */ }
   window.addEventListener("hashchange", render);
@@ -1016,4 +1076,5 @@ Amounts are positive numbers without currency symbols. Do not invent items you c
     S = sample(); S.isSample = true; save();
   }
   render();
+  connectCloud();
 })();
