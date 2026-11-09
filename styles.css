@@ -192,3 +192,22 @@ details.fold > summary h2 { margin: 0; display: inline; }
 details.fold > summary::after { content: "＋"; float: right; color: var(--muted); }
 details.fold[open] > summary { margin-bottom: 12px; }
 details.fold[open] > summary::after { content: "－"; }
+
+/* dashboard hero */
+.hero .label { color: var(--ink-2); font-size: 13px; }
+.hero .hint { color: var(--muted); font-size: 13px; margin-top: 4px; }
+.hero-top { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; align-items: flex-end; margin-bottom: 14px; }
+.hero-value { font-size: clamp(30px, 8vw, 44px); font-weight: 700; letter-spacing: -0.5px; margin-top: 2px; }
+.hero-side { text-align: right; }
+.side-value { font-size: 20px; font-weight: 600; }
+.hero-side a.hint { color: var(--s1); text-decoration: none; display: inline-block; }
+.hero-bar { position: relative; height: 26px; border-radius: 6px; background: var(--grid); overflow: hidden; }
+.hero-bar > div { height: 100%; background: var(--s1); border-radius: 6px; }
+.hero-bar > span { position: absolute; left: 10px; top: 4px; font-size: 13px; font-weight: 600; color: #fff; }
+@media (max-width: 520px) { .hero-side { text-align: left; } }
+
+@media (max-width: 640px) {
+  nav { flex-wrap: nowrap; overflow-x: auto; width: 100%; scrollbar-width: none; }
+  nav::-webkit-scrollbar { display: none; }
+  nav a { white-space: nowrap; }
+}

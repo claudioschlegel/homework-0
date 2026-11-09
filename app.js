@@ -202,8 +202,8 @@
     return `<div class="bars">${rows.map((r) => `
       <div class="bar-row" data-tip="<b>${esc(r.k)}</b><br>${esc(money(r.v))}${total ? " · " + pct(r.v / total) : ""}">
         <span class="name">${esc(r.k)}</span>
-        <div class="track"><div class="fill" style="width:${(r.v / max) * 100}%"></div></div>
-        <span class="amt">${total ? pct(r.v / total) : esc(money(r.v, true))}</span>
+        <div class="track"><div class="fill" style="width:${(r.v / max) * 100}%${r.c ? ";background:" + r.c : ""}"></div></div>
+        <span class="amt">${total ? (r.v / total < 0.001 ? "<0.1%" : pct(r.v / total)) : esc(money(r.v, true))}</span>
       </div>`).join("")}</div>`;
   }
 
@@ -269,18 +269,45 @@
       ["Savings rate YTD", pct(ytd.i ? (ytd.i - ytd.e) / ytd.i : NaN), `${money(ytd.i - ytd.e)} kept of ${money(ytd.i)}`, ""],
       ["Cash runway", burn ? runway.toFixed(1) + " mo" : "–", `Avg burn ${money(burn)}/mo`, runway && runway < S.settings.emergencyMonths ? "neg" : ""],
     ];
-    const ins = insights();
+    const hasTx = S.transactions.length > 0, hasAcc = S.accounts.length > 0, hasGoals = S.goals.length > 0;
+    const ins = hasTx || hasAcc || hasGoals ? insights() : [];
+
+    // Income first: the headline is the last full month, the current month shows as "so far".
+    const I = S.income, goal = +I.goal || 0, curK = months[11];
+    const fullK = [...months].reverse().find((k) => k < curK && incomeTotal(k).has) || months[10];
+    const full = incomeTotal(fullK), now = incomeTotal(curK), prevFull = incomeTotal(shiftMonth(fullK, -1));
+    const ratio = goal ? Math.min(1, full.total / goal) : 0;
+    const chg = prevFull.total ? full.total / prevFull.total - 1 : NaN;
+    const groupRows = GROUPS.map((g) => ({ k: g, v: full.groups[g] || 0, c: GROUP_COLOR[g] })).filter((r) => r.v > 0);
+    const streamRows = I.streams.map((st) => ({ k: st.name + (I.streams.filter((x) => x.name === st.name).length > 1 ? ` (${st.group})` : ""), v: streamVal(fullK, st.id), c: GROUP_COLOR[st.group] }))
+      .filter((r) => r.v > 0).sort((a, b) => b.v - a.v).slice(0, 8);
+    const hero = `
+      <div class="card span-12 hero">
+        <div class="hero-top">
+          <div><div class="label">Monthly income · ${esc(monthLabel(fullK))}</div>
+            <div class="hero-value">${esc(money(full.total))}</div>
+            <div class="hint">${isFinite(chg) ? `<span class="${chg >= 0 ? "pos" : "neg"}">${chg >= 0 ? "+" : ""}${pct(chg)}</span> vs ${esc(monthLabel(shiftMonth(fullK, -1)))} · ` : ""}Goal ${esc(money(goal))}/mo</div></div>
+          <div class="hero-side"><div class="label">${esc(monthLabel(curK))} so far</div><div class="side-value">${esc(money(now.total))}</div>
+            <a href="#income" class="hint">Update income ›</a></div>
+        </div>
+        <div class="hero-bar" data-tip="${esc(money(full.total))} of ${esc(money(goal))}"><div style="width:${ratio * 100}%"></div><span style="${ratio > 0.25 ? "" : `left:calc(${ratio * 100}% + 8px);color:var(--ink)`}">${pct(goal ? full.total / goal : NaN)} of goal</span></div>
+        <div class="hint">Gap to goal: ${esc(money(Math.max(0, goal - full.total)))}</div>
+      </div>`;
     return `
       <h1>Dashboard</h1>
-      <p class="sub">Where you stand, where the money goes, and what needs a decision.</p>
+      <p class="sub">Income against your MXN 5.5M monthly goal. More sections appear here as you fill in the other tabs.</p>
       <div class="grid">
-        ${tiles.map(([l, v, h, c]) => `<div class="card tile span-3"><div class="label">${l}</div><div class="value">${v}</div><div class="hint ${c}">${h}</div></div>`).join("")}
-        <div class="card span-8"><h2>Cash flow, last 12 months</h2>${cashflowChart(months)}</div>
-        <div class="card span-4"><h2>Needs attention</h2>${ins.length ? ins.map(([c, t]) => `<div class="insight ${c}">${esc(t)}</div>`).join("") : `<p class="empty">Nothing flagged. Good month.</p>`}</div>
-        <div class="card span-8"><h2>Net worth over time</h2>${lineChart(snaps.map((s) => ({ v: s.value, label: monthLabel(ym(s.date)) })), "Net worth over time")}</div>
-        <div class="card span-4"><h2>Goals</h2>${goalsList(true)}</div>
-        <div class="card span-6"><h2>Spending by category, last 3 months</h2>${barList(catRows, sum(catRows, (r) => r.v))}</div>
-        <div class="card span-6"><h2>Asset allocation</h2>${barList(allocRows, sum(allocRows, (r) => r.v))}</div>
+        ${hero}
+        <div class="card span-12"><h2>Income by month</h2>${incomeChart(curK)}</div>
+        <div class="card span-6"><h2>By group · ${esc(monthLabel(fullK))}</h2>${barList(groupRows, full.total)}</div>
+        <div class="card span-6"><h2>Top streams · ${esc(monthLabel(fullK))}</h2>${barList(streamRows, full.total)}</div>
+        ${hasTx || hasAcc ? tiles.map(([l, v, h, c]) => `<div class="card tile span-3"><div class="label">${l}</div><div class="value">${v}</div><div class="hint ${c}">${h}</div></div>`).join("") : ""}
+        ${hasTx ? `<div class="card span-8"><h2>Cash flow, last 12 months</h2>${cashflowChart(months)}</div>` : ""}
+        ${ins.length ? `<div class="card span-4"><h2>Needs attention</h2>${ins.map(([c, t]) => `<div class="insight ${c}">${esc(t)}</div>`).join("")}</div>` : ""}
+        ${snaps.length ? `<div class="card span-8"><h2>Net worth over time</h2>${lineChart(snaps.map((s) => ({ v: s.value, label: monthLabel(ym(s.date)) })), "Net worth over time")}</div>` : ""}
+        ${hasGoals ? `<div class="card span-4"><h2>Goals</h2>${goalsList(true)}</div>` : ""}
+        ${catRows.length ? `<div class="card span-6"><h2>Spending by category, last 3 months</h2>${barList(catRows, sum(catRows, (r) => r.v))}</div>` : ""}
+        ${allocRows.length ? `<div class="card span-6"><h2>Asset allocation</h2>${barList(allocRows, sum(allocRows, (r) => r.v))}</div>` : ""}
       </div>`;
   };
 
@@ -540,10 +567,14 @@ ONE DECISION FOR NEXT MONTH
   }
 
   function incomeChart(endKey) {
-    const ks = []; for (let i = 11; i >= 0; i--) ks.push(shiftMonth(endKey, -i));
+    // Start at the first month with income (at least 6 months shown); fewer months on a phone.
+    const narrow = window.innerWidth < 640, maxN = narrow ? 6 : 12;
+    let n = 6;
+    for (let i = maxN - 1; i >= 0; i--) if (incomeTotal(shiftMonth(endKey, -i)).has) { n = Math.max(6, i + 1); break; }
+    const ks = []; for (let i = n - 1; i >= 0; i--) ks.push(shiftMonth(endKey, -i));
     const data = ks.map((k) => ({ k, ...incomeTotal(k) }));
     const goal = +S.income.goal || 0;
-    const W = 1040, H = 280, L = 70, B = 26, T = 18;
+    const W = narrow ? 380 : 1040, H = narrow ? 240 : 280, L = narrow ? 54 : 70, B = 26, T = 18;
     const max = niceMax(Math.max(goal, ...data.map((d) => d.total)) * 1.05);
     const plotH = H - B - T, plotW = W - L, step = plotW / ks.length, bw = Math.min(30, step - 12);
     const y = (v) => T + plotH - (v / max) * plotH;
@@ -568,7 +599,7 @@ ONE DECISION FOR NEXT MONTH
     });
     if (goal) g += `<line x1="${L}" x2="${W}" y1="${y(goal)}" y2="${y(goal)}" stroke="var(--ink)" stroke-dasharray="4 4" stroke-width="1"/><text x="${W}" y="${y(goal) - 6}" text-anchor="end" style="fill:var(--ink)">Goal ${esc(money(goal, true))}/mo</text>`;
     return `<div class="legend" style="flex-wrap:wrap">${GROUPS.map((gr) => `<span><i style="background:${GROUP_COLOR[gr]}"></i>${gr}</span>`).join("")}</div>
-      <div class="chart-scroll"><svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Monthly income by group against goal">${g}</svg></div>`;
+      <div><svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Monthly income by group against goal">${g}</svg></div>`;
   }
 
   views.income = () => {
