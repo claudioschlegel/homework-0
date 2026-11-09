@@ -274,7 +274,8 @@
 
     // Income first: the headline is the last full month, the current month shows as "so far".
     const I = S.income, goal = +I.goal || 0, curK = months[11];
-    const fullK = [...months].reverse().find((k) => k < curK && incomeTotal(k).has) || months[10];
+    const fullK = [...months].reverse().find((k) => k < curK && incomeTotal(k).has) || curK;
+    const isCur = fullK === curK;
     const full = incomeTotal(fullK), now = incomeTotal(curK), prevFull = incomeTotal(shiftMonth(fullK, -1));
     const ratio = goal ? Math.min(1, full.total / goal) : 0;
     const chg = prevFull.total ? full.total / prevFull.total - 1 : NaN;
@@ -284,10 +285,10 @@
     const hero = `
       <div class="card span-12 hero">
         <div class="hero-top">
-          <div><div class="label">Monthly income · ${esc(monthLabel(fullK))}</div>
+          <div><div class="label">Monthly income · ${esc(monthLabel(fullK))}${isCur ? " so far" : ""}</div>
             <div class="hero-value">${esc(money(full.total))}</div>
             <div class="hint">${isFinite(chg) ? `<span class="${chg >= 0 ? "pos" : "neg"}">${chg >= 0 ? "+" : ""}${pct(chg)}</span> vs ${esc(monthLabel(shiftMonth(fullK, -1)))} · ` : ""}Goal ${esc(money(goal))}/mo</div></div>
-          <div class="hero-side"><div class="label">${esc(monthLabel(curK))} so far</div><div class="side-value">${esc(money(now.total))}</div>
+          <div class="hero-side">${isCur ? "" : `<div class="label">${esc(monthLabel(curK))} so far</div><div class="side-value">${esc(money(now.total))}</div>`}
             <a href="#income" class="hint">Update income ›</a></div>
         </div>
         <div class="hero-bar" data-tip="${esc(money(full.total))} of ${esc(money(goal))}"><div style="width:${ratio * 100}%"></div><span style="${ratio > 0.25 ? "" : `left:calc(${ratio * 100}% + 8px);color:var(--ink)`}">${pct(goal ? full.total / goal : NaN)} of goal</span></div>
