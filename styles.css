@@ -235,3 +235,7 @@ details.fold[open] > summary::after { content: "－"; }
 .plan-table input.amt-in { width: 120px; }
 @media (max-width: 640px) { .nav2 { margin-left: 0; } }
 .kv a { color: var(--s1); text-decoration: none; }
+.split2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 8px; }
+.split2 .label { color: var(--ink-2); font-size: 13px; }
+.sv-table td input:not(.amt-in) { width: 100%; min-width: 160px; }
+@media (max-width: 520px) { .split2 { grid-template-columns: 1fr; } }

@@ -33,7 +33,7 @@
     ];
     const streams = []; let n = 0;
     groups.forEach(([group, recurring, names]) => names.forEach((name) => streams.push({ id: "st" + ++n, name, group, recurring, status: "Live" })));
-    return { goal: 5500000, interestGoal: 1500000, goalDate: "", streams, destinations: allocSeed(), entries: {}, allocations: {} };
+    return { goal: 5500000, interestGoal: 1500000, goalDate: "", streams, destinations: allocSeed(), entries: {}, allocations: {}, savings: {} };
   }
 
   // Where each month's income goes. "budget" is the monthly plan; actuals live in income.allocations[month][id].
@@ -116,14 +116,53 @@
     "Payments": "Team and service providers.",
     "Operating costs": "Costs of running the structure.",
   };
-  function otherSpend(k) { return sum(S.transactions.filter((t) => t.kind === "expense" && ym(t.date) === k), (t) => +t.amount); }
+  // Where an expense was paid from. "budget" maps each source to the allocation lines that fund it.
+  const SOURCES = [
+    { id: "bbva", name: "BBVA", groups: ["Bank · BBVA"] },
+    { id: "trfcs", name: "TRF · CS", lines: ["a5"] },
+    { id: "trfrv", name: "TRF · RV", lines: ["a6"] },
+    { id: "cash", name: "Cash", groups: ["Cash"] },
+    { id: "loggia", name: "Loggia", groups: ["Payments", "Operating costs"] },
+    { id: "saldo", name: "Saldo" },
+    { id: "other", name: "Other" },
+  ];
+  const PLACES = [
+    { id: "loggia", name: "Loggia", hint: "Holding company. Income not sent out, plus what Loggia did not spend." },
+    { id: "bbva", name: "BBVA", hint: "What is left of the salaries after spending." },
+    { id: "saldo", name: "Saldo", hint: "Balances left on the TRF cards and in cash." },
+  ];
+  const CAT_SUGGEST = ["Household", "Food & dining", "Family", "Health", "Transport", "Travel", "Shopping", "Team", "Services", "Taxes", "Interest & fees", "Giving", "Other"];
+  const expMonth = (t) => t.month || ym(t.date);
+  const sourceLines = (src) => S.income.destinations.filter((d) => (src.groups || []).includes(d.group) || (src.lines || []).includes(d.id));
   function monthSpend(k) {
-    const a = (S.income.allocations || {})[k] || {};
-    const by = { total: 0, groups: {}, other: otherSpend(k), has: false };
-    ALLOC_GROUPS.forEach((g) => (by.groups[g] = 0));
-    S.income.destinations.forEach((d) => { const v = +a[d.id] || 0; if (v) { by.has = true; by.groups[d.group] = (by.groups[d.group] || 0) + v; by.total += v; } });
-    by.total += by.other; if (by.other) by.has = true;
+    const list = S.transactions.filter((t) => t.kind === "expense" && expMonth(t) === k);
+    const by = { total: 0, cats: {}, sources: {}, has: list.length > 0, list };
+    list.forEach((t) => { const v = +t.amount || 0; by.total += v; const c = t.category || "Uncategorized"; by.cats[c] = (by.cats[c] || 0) + v; const f = t.from || "other"; by.sources[f] = (by.sources[f] || 0) + v; });
     return by;
+  }
+  function allocatedBy(k) {
+    const a = (S.income.allocations || {})[k] || {};
+    const by = { total: 0, groups: {}, lines: a, sources: {} };
+    S.income.destinations.forEach((d) => { const v = +a[d.id] || 0; by.groups[d.group] = (by.groups[d.group] || 0) + v; by.total += v; });
+    SOURCES.forEach((src) => (by.sources[src.id] = sum(sourceLines(src), (d) => +a[d.id] || 0)));
+    return by;
+  }
+  function sourceBudget(src) { return sum(sourceLines(src), (d) => +d.budget || 0); }
+  // What should be left in each place, from income, money sent and money spent.
+  function expectedLeft(k) {
+    const inc = incomeTotal(k).total, al = allocatedBy(k), sp = monthSpend(k).sources;
+    const left = (id) => (al.sources[id] || 0) - (sp[id] || 0);
+    return {
+      loggia: inc - al.total + left("loggia"),
+      bbva: left("bbva"),
+      saldo: left("trfcs") + left("trfrv") + left("cash") - (sp.saldo || 0),
+    };
+  }
+  function savingsOf(k) {
+    const sv = ((S.income.savings || {})[k]) || {};
+    const out = { left: 0, reinvested: 0, places: {}, has: false };
+    PLACES.forEach((pl) => { const r = sv[pl.id] || {}; out.places[pl.id] = r; out.left += +r.left || 0; out.reinvested += +r.reinvested || 0; if (r.left || r.reinvested) out.has = true; });
+    return out;
   }
   function budgetBy() {
     const by = { total: 0, groups: {} };
@@ -287,17 +326,19 @@
   const views = {};
 
   views.dashboard = () => {
-    const k = incomeMonthSafe(), prevK = shiftMonth(k, -1);
-    const inc = incomeTotal(k), spend = monthSpend(k), bud = budgetBy(), I = S.income;
-    const goal = +I.goal || 0, left = inc.total - spend.total, plannedLeft = goal - bud.total;
+    const k = incomeMonthSafe(), I = S.income;
+    const inc = incomeTotal(k), spend = monthSpend(k), bud = budgetBy(), sv = savingsOf(k);
+    const goal = +I.goal || 0, left = inc.total - spend.total;
     const groupRows = GROUPS.map((g) => ({ k: g, v: inc.groups[g] || 0, c: GROUP_COLOR[g] })).filter((r) => r.v > 0);
-    const spendRows = ALLOC_GROUPS.map((g, i) => ({ k: g, v: spend.groups[g] || 0, c: `var(--s${(i % 5) + 1})` })).concat(spend.other ? [{ k: "Other expenses", v: spend.other, c: "var(--muted)" }] : []).filter((r) => r.v > 0);
-    const ytd = lastMonths(12).filter((m) => m.slice(0, 4) === k.slice(0, 4) && m <= k).reduce((a2, m) => a2 + incomeTotal(m).total - monthSpend(m).total, 0);
-    const budgetRows = ALLOC_GROUPS.filter((g) => (bud.groups[g] || 0) || (spend.groups[g] || 0)).map((g) => {
-      const act = spend.groups[g] || 0, plan = bud.groups[g] || 0;
-      return `<div class="bva"><div class="bva-top"><span>${esc(g)}</span><span><b>${esc(money(act))}</b> <span class="muted">of ${plan ? esc(money(plan)) : "no budget"}</span></span></div>
-        <div class="track"><div class="fill" style="width:${plan ? Math.min(100, (act / plan) * 100) : act ? 100 : 0}%;background:${plan && act > plan ? "var(--critical)" : "var(--s2)"}"></div></div></div>`;
+    const catRows = Object.entries(spend.cats).map(([c, v]) => ({ k: c, v, c: "var(--s2)" })).sort((a, b) => b.v - a.v).slice(0, 8);
+    const al = allocatedBy(k);
+    const srcRows = SOURCES.filter((src) => (spend.sources[src.id] || 0) || sourceBudget(src)).map((src) => {
+      const spent = spend.sources[src.id] || 0, sent = al.sources[src.id] || sourceBudget(src);
+      return bva(src.name, spent, sent, al.sources[src.id] ? "sent" : "planned");
     }).join("");
+    const placeRows = PLACES.map((pl) => ({ k: pl.name, v: +sv.places[pl.id].left || 0, c: "var(--s3)" })).filter((r) => r.v > 0);
+    const yr = lastMonths(12).filter((m) => m.slice(0, 4) === k.slice(0, 4) && m <= k);
+    const ytdLeft = sum(yr, (m) => incomeTotal(m).total - monthSpend(m).total), ytdRe = sum(yr, (m) => savingsOf(m).reinvested);
     const section = (n, title, body, span = 6) => `<div class="card span-${span} dash-sec"><div class="sec-num">${n}</div><h2>${title}</h2>${body}</div>`;
     return `
       <h1>Dashboard</h1>
@@ -308,22 +349,25 @@
       </div>
       <div class="grid">
         ${section(1, "Income", `<div class="big">${esc(money(inc.total))}</div>
-          <div class="hint">${esc(monthLabel(k))} · ${inc.has ? `${GROUPS.filter((g) => inc.groups[g]).length} groups` : "nothing logged yet"} · <a href="#income">Update ›</a></div>
-          ${barList(groupRows, inc.total)}`)}
+          <div class="hint">${esc(monthLabel(k))} · <a href="#income">Update ›</a></div>${barList(groupRows, inc.total)}`)}
         ${section(2, "Income vs goal", `${goalBar("Total income", inc.total, goal, "var(--s1)")}${goalBar("Interest income", inc.groups["Interests"] || 0, +I.interestGoal || 0, "var(--s1)")}`)}
-        ${section(3, "Spending", `<div class="big">${esc(money(spend.total))}</div>
-          <div class="hint">${esc(monthLabel(k))} · ${spend.has ? "allocations and other expenses" : "nothing logged yet"} · <a href="#allocation">Update ›</a></div>
-          ${barList(spendRows, spend.total)}`)}
-        ${section(4, "Spending vs budget", `<div class="hint" style="margin-bottom:8px">${esc(money(spend.total))} of ${esc(money(bud.total))} monthly budget · ${pct(bud.total ? spend.total / bud.total : NaN)}</div>${budgetRows || '<p class="empty">Set budgets in Allocation.</p>'}`)}
-        ${section(5, "Left to invest", `<div class="big ${left >= 0 ? "" : "neg"}">${esc(money(left))}</div>
-          <div class="hint">Income minus spending in ${esc(monthLabel(k))}. This is what grows your net worth.</div>
-          <div class="kv"><span>Planned at goal</span><b>${esc(money(plannedLeft))}</b></div>
-          <div class="kv"><span>Share of income kept</span><b>${pct(inc.total ? left / inc.total : NaN)}</b></div>
-          <div class="kv"><span>Kept so far in ${esc(k.slice(0, 4))}</span><b>${esc(money(ytd))}</b></div>
-          <div class="kv"><span>Net worth today</span><b>${S.accounts.length ? esc(money(netWorth())) : '<a href="#wealth">Add accounts ›</a>'}</b></div>`, 12)}
+        ${section(3, "Expenses", `<div class="big">${esc(money(spend.total))}</div>
+          <div class="hint">${esc(monthLabel(k))} · ${spend.list.length} logged · <a href="#expenses">Add ›</a></div>${catRows.length ? barList(catRows, spend.total) : '<p class="empty">No expenses logged for this month yet.</p>'}`)}
+        ${section(4, "Expenses vs budget", `<div class="hint" style="margin-bottom:8px">${esc(money(spend.total))} spent of ${esc(money(bud.total))} monthly plan · ${pct(bud.total ? spend.total / bud.total : NaN)}</div>${srcRows || '<p class="empty">Set budgets in Allocation.</p>'}`)}
+        ${section(5, "Saved &amp; reinvested", `<div class="split2">
+            <div><div class="label">Left after expenses</div><div class="big ${left < 0 ? "neg" : ""}">${esc(money(left))}</div><div class="hint">${pct(inc.total ? left / inc.total : NaN)} of income</div></div>
+            <div><div class="label">Reinvested</div><div class="big">${esc(money(sv.reinvested))}</div><div class="hint">${pct(left > 0 ? sv.reinvested / left : NaN)} of what was left · <a href="#savings">Update ›</a></div></div>
+          </div>
+          ${placeRows.length ? barList(placeRows, sv.left) : '<p class="empty">Confirm the month-end balances in Loggia, BBVA and Saldo in the Savings tab.</p>'}
+          <div class="kv"><span>Left after expenses in ${esc(k.slice(0, 4))}</span><b>${esc(money(ytdLeft))}</b></div>
+          <div class="kv"><span>Reinvested in ${esc(k.slice(0, 4))}</span><b>${esc(money(ytdRe))}</b></div>`, 12)}
         <div class="card span-12"><h2>Income by month</h2>${incomeChart(k)}</div>
       </div>`;
   };
+  function bva(label, act, plan, word) {
+    return `<div class="bva"><div class="bva-top"><span>${esc(label)}</span><span><b>${esc(money(act))}</b> <span class="muted">${plan ? `of ${esc(money(plan))} ${word || ""}` : "no budget"}</span></span></div>
+      <div class="track"><div class="fill" style="width:${plan ? Math.min(100, (act / plan) * 100) : act ? 100 : 0}%;background:${plan && act > plan ? "var(--critical)" : "var(--s2)"}"></div></div></div>`;
+  }
 
   let flowMonth = "all";
   views.flows = () => {
@@ -734,13 +778,13 @@ ONE DECISION FOR NEXT MONTH
   views.allocation = () => {
     const I = S.income, k = incomeMonthSafe(), inc = incomeTotal(k), spend = monthSpend(k), bud = budgetBy();
     const a = I.allocations[k] || {};
-    const allocated = spend.total - spend.other, left = inc.total - allocated;
+    const allocated = allocatedBy(k).total, left = inc.total - allocated;
     const groups = ALLOC_GROUPS.concat([...new Set(I.destinations.map((d) => d.group))].filter((g) => !ALLOC_GROUPS.includes(g)));
     const rows = groups.map((g) => {
       const list = I.destinations.filter((d) => d.group === g); if (!list.length) return "";
       return `<tbody>
         <tr class="grp-head"><th>${esc(g)}${ALLOC_NOTE[g] ? `<div class="row-note" style="font-weight:400">${esc(ALLOC_NOTE[g])}</div>` : ""}</th>
-          <th class="num muted">${bud.groups[g] ? esc(money(bud.groups[g])) : ""}</th><th class="num" data-gsum="${esc(g)}">${esc(money(spend.groups[g] || 0))}</th></tr>
+          <th class="num muted">${bud.groups[g] ? esc(money(bud.groups[g])) : ""}</th><th class="num" data-gsum="${esc(g)}">${esc(money(allocatedBy(k).groups[g] || 0))}</th></tr>
         ${list.map((d) => `<tr><td>${esc(d.name)}${d.purpose ? `<div class="row-note">${esc(d.purpose)}</div>` : ""}</td>
           <td class="num muted">${d.budget ? esc(money(+d.budget)) : "–"}</td>
           <td class="num"><input class="amt-in" inputmode="decimal" data-act="${d.id}" value="${fmtInput(+a[d.id] || 0)}" placeholder="0"></td></tr>`).join("")}
@@ -754,12 +798,12 @@ ONE DECISION FOR NEXT MONTH
       <td><button class="link" data-pl-del="${d.id}" aria-label="Remove">✕</button></td></tr>`).join("");
     return `
       <h1>Allocation</h1>
-      <p class="sub">Where each month's income goes and why. The plan is your monthly budget. Enter what actually went out.</p>
+      <p class="sub">Where each month's income is sent and why. The plan is your monthly budget. Enter what was actually sent.</p>
       ${monthNav()}
       <div class="grid">
         <div class="card tile span-4"><div class="label">Income ${esc(monthLabel(k))}</div><div class="value">${esc(money(inc.total))}</div><div class="hint"><a href="#income">From Income ›</a></div></div>
         <div class="card tile span-4"><div class="label">Allocated</div><div class="value" id="alTotal">${esc(money(allocated))}</div><div class="hint">Plan ${esc(money(bud.total))} per month</div></div>
-        <div class="card tile span-4"><div class="label">Left to invest</div><div class="value ${left < 0 ? "neg" : ""}" id="alLeft">${esc(money(left))}</div><div class="hint">Planned at goal: ${esc(money((+I.goal || 0) - bud.total))}</div></div>
+        <div class="card tile span-4"><div class="label">Stays in Loggia</div><div class="value ${left < 0 ? "neg" : ""}" id="alLeft">${esc(money(left))}</div><div class="hint">Income not sent out. At goal: ${esc(money((+I.goal || 0) - bud.total))}</div></div>
         <div class="card span-12"><div class="card-head"><h2>${esc(monthLabel(k))}</h2><span><button id="alCopy">Use plan amounts</button> <button class="primary" id="alSave">Save month</button></span></div>
           <div class="table-wrap"><table class="inc-table">
             <thead><tr><th>Line</th><th class="num">Plan</th><th class="num">Actual</th></tr></thead>
@@ -820,24 +864,100 @@ ONE DECISION FOR NEXT MONTH
   }
 
   views.expenses = () => {
-    const k = incomeMonthSafe(), spend = monthSpend(k), bud = budgetBy();
-    const rows = ALLOC_GROUPS.map((g, i) => ({ g, act: spend.groups[g] || 0, plan: bud.groups[g] || 0 })).filter((r) => r.act || r.plan);
+    const k = incomeMonthSafe(), spend = monthSpend(k), bud = budgetBy(), al = allocatedBy(k);
+    const cats = [...new Set(S.transactions.filter((t) => t.kind === "expense").map((t) => t.category).filter(Boolean).concat(CAT_SUGGEST))];
+    const catRows = Object.entries(spend.cats).map(([c, v]) => ({ k: c, v, c: "var(--s2)" })).sort((a, b) => b.v - a.v);
+    const srcRows = SOURCES.filter((src) => (spend.sources[src.id] || 0) || sourceBudget(src) || al.sources[src.id]).map((src) => bva(src.name, spend.sources[src.id] || 0, al.sources[src.id] || sourceBudget(src), al.sources[src.id] ? "sent" : "planned")).join("");
+    const srcName = (id) => (SOURCES.find((x) => x.id === id) || { name: id || "Other" }).name;
+    const list = [...spend.list].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const defDate = today().slice(0, 7) === k ? today() : k + "-01";
     return `
       <h1>Expenses</h1>
-      <p class="sub">Everything that went out in ${esc(monthLabel(k))}: the allocation lines plus any other expenses.</p>
+      <p class="sub">Log each expense as it arrives: where it was paid, which account paid it, and a category. Categories grow as you add them.</p>
       ${monthNav()}
       <div class="grid">
-        <div class="card tile span-4"><div class="label">Spent ${esc(monthLabel(k))}</div><div class="value">${esc(money(spend.total))}</div><div class="hint">${pct(bud.total ? spend.total / bud.total : NaN)} of budget</div></div>
-        <div class="card tile span-4"><div class="label">Monthly budget</div><div class="value">${esc(money(bud.total))}</div><div class="hint"><a href="#allocation">Edit in Allocation ›</a></div></div>
-        <div class="card tile span-4"><div class="label">Other expenses</div><div class="value">${esc(money(spend.other))}</div><div class="hint">Not part of a planned line</div></div>
-        <div class="card span-12"><h2>Spending vs budget</h2>
-          ${rows.map((r) => `<div class="bva"><div class="bva-top"><span>${esc(r.g)}</span><span><b>${esc(money(r.act))}</b> <span class="muted">of ${r.plan ? esc(money(r.plan)) : "no budget"}</span></span></div>
-            <div class="track"><div class="fill" style="width:${r.plan ? Math.min(100, (r.act / r.plan) * 100) : r.act ? 100 : 0}%;background:${r.plan && r.act > r.plan ? "var(--critical)" : "var(--s2)"}"></div></div></div>`).join("")}
+        <div class="card tile span-4"><div class="label">Spent ${esc(monthLabel(k))}</div><div class="value">${esc(money(spend.total))}</div><div class="hint">${list.length} expenses logged</div></div>
+        <div class="card tile span-4"><div class="label">Monthly plan</div><div class="value">${esc(money(bud.total))}</div><div class="hint">${pct(bud.total ? spend.total / bud.total : NaN)} used · <a href="#allocation">Plan ›</a></div></div>
+        <div class="card tile span-4"><div class="label">Biggest category</div><div class="value" style="font-size:20px">${catRows[0] ? esc(catRows[0].k) : "–"}</div><div class="hint">${catRows[0] ? esc(money(catRows[0].v)) : "Nothing logged yet"}</div></div>
+        <div class="card span-12"><h2>Add expense · counts for ${esc(monthLabel(k))}</h2>
+          <form class="row" id="exForm">
+            <label class="f">Date<input type="date" name="date" value="${defDate}" required></label>
+            <label class="f" style="flex:1;min-width:180px">Paid to / what<input name="desc" placeholder="e.g. Liverpool, school, dinner" required></label>
+            <label class="f">Amount<input name="amount" inputmode="decimal" required placeholder="0"></label>
+            <label class="f">Paid from<select name="from">${SOURCES.map((src) => `<option value="${src.id}">${esc(src.name)}</option>`).join("")}</select></label>
+            <label class="f">Category<input name="category" list="catList" placeholder="Pick or type new" required><datalist id="catList">${cats.map((c) => `<option value="${esc(c)}">`).join("")}</datalist></label>
+            <button class="primary">Add</button>
+          </form>
         </div>
-      </div>
-      <h2 style="margin-top:24px">Other expenses</h2>
-      ${views.flows().replace(/<h1>Transactions<\/h1>\s*<p class="sub">[^<]*<\/p>/, '<p class="sub">Expenses outside the allocation plan. Log them one by one or import a CSV.</p>')}`;
+        <div class="card span-6"><h2>By category</h2>${catRows.length ? barList(catRows, spend.total) : '<p class="empty">No expenses yet.</p>'}</div>
+        <div class="card span-6"><h2>By account: spent vs sent</h2>${srcRows || '<p class="empty">No budgets yet.</p>'}</div>
+        <div class="card span-12"><h2>${esc(monthLabel(k))} expenses</h2>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Date</th><th>Paid to</th><th>Category</th><th>From</th><th class="num">Amount</th><th></th></tr></thead>
+            <tbody>${list.map((t) => `<tr><td>${esc(t.date)}</td><td>${esc(t.desc)}</td><td>${esc(t.category)}</td><td>${esc(srcName(t.from))}</td>
+              <td class="num">${esc(money(+t.amount))}</td><td><button class="link" data-del-tx="${t.id}" aria-label="Delete">✕</button></td></tr>`).join("") || `<tr><td colspan="6" class="empty">Nothing logged for ${esc(monthLabel(k))} yet.</td></tr>`}</tbody>
+          </table></div>
+          <details><summary>Import CSV (date, paid to, amount, category, from)</summary>
+            <p class="sub">One expense per row. Header row optional. Amounts can be negative or positive. Rows count for ${esc(monthLabel(k))}.</p>
+            <input type="file" id="csvIn" accept=".csv,text/csv">
+          </details>
+        </div>
+      </div>`;
   };
+
+  views.savings = () => {
+    const k = incomeMonthSafe(), inc = incomeTotal(k).total, spend = monthSpend(k).total, left = inc - spend;
+    const sv = savingsOf(k), ex = expectedLeft(k);
+    const rows = PLACES.map((pl) => { const r = sv.places[pl.id] || {}; return `<tr>
+      <td>${esc(pl.name)}<div class="row-note">${esc(pl.hint)}</div></td>
+      <td class="num ${ex[pl.id] < 0 ? "neg" : "muted"}">${esc(money(ex[pl.id]))}</td>
+      <td class="num"><input class="amt-in" inputmode="decimal" data-sv-left="${pl.id}" value="${fmtInput(+r.left || 0)}" placeholder="0"></td>
+      <td class="num"><input class="amt-in" inputmode="decimal" data-sv-re="${pl.id}" value="${fmtInput(+r.reinvested || 0)}" placeholder="0"></td>
+      <td><input data-sv-note="${pl.id}" value="${esc(r.note || "")}" placeholder="Where it was invested"></td></tr>`; }).join("");
+    const gap = left - sv.left;
+    return `
+      <h1>Savings</h1>
+      <p class="sub">What is left after all expenses, where it sits (Loggia, BBVA, Saldo) and how much of it gets reinvested.</p>
+      ${monthNav()}
+      <div class="grid">
+        <div class="card tile span-3"><div class="label">Income</div><div class="value">${esc(money(inc))}</div></div>
+        <div class="card tile span-3"><div class="label">Expenses</div><div class="value">${esc(money(spend))}</div></div>
+        <div class="card tile span-3"><div class="label">Left after expenses</div><div class="value ${left < 0 ? "neg" : ""}">${esc(money(left))}</div><div class="hint">${pct(inc ? left / inc : NaN)} of income</div></div>
+        <div class="card tile span-3"><div class="label">Reinvested</div><div class="value" id="svRe">${esc(money(sv.reinvested))}</div><div class="hint">${pct(left > 0 ? sv.reinvested / left : NaN)} of what was left</div></div>
+        <div class="card span-12"><div class="card-head"><h2>${esc(monthLabel(k))} · where the money was left</h2><span><button id="svUse">Use expected</button> <button class="primary" id="svSave">Save month</button></span></div>
+          <div class="table-wrap"><table class="inc-table sv-table">
+            <thead><tr><th>Place</th><th class="num">Expected</th><th class="num">Left</th><th class="num">Reinvested</th><th>Note</th></tr></thead>
+            <tbody>${rows}</tbody>
+            <tfoot><tr><th>Total</th><th class="num">${esc(money(ex.loggia + ex.bbva + ex.saldo))}</th><th class="num" id="svLeft">${esc(money(sv.left))}</th><th class="num" id="svRe2">${esc(money(sv.reinvested))}</th><th></th></tr></tfoot>
+          </table></div>
+          <p class="sub" style="margin:10px 0 0">Expected = income minus what was sent out (stays in Loggia), plus what was sent but not spent. Confirm with the real month-end balances.
+            ${sv.has && Math.abs(gap) > 1 ? `<br><b class="${gap > 0 ? "neg" : ""}">${esc(money(Math.abs(gap)))} ${gap > 0 ? "of the money left after expenses is not in any of the three places yet. Likely an expense not logged." : "more in the three places than income minus expenses. Check for income not logged."}</b>` : ""}</p>
+          <p class="saved-note" id="svDirty" hidden>Unsaved changes</p>
+        </div>
+      </div>`;
+  };
+
+  let svAbort = null;
+  function wireSavings() {
+    if (svAbort) svAbort.abort(); svAbort = new AbortController();
+    const sig = { signal: svAbort.signal }, I = S.income, k = incomeMonthSafe();
+    let dirty = false;
+    const tot = (attr) => sum([...document.querySelectorAll(`[data-sv-${attr}]`)], (el) => num(el.value));
+    const refresh = () => { $("#svLeft").textContent = money(tot("left")); $("#svRe2").textContent = money(tot("re")); };
+    const saveSv = () => {
+      I.savings = I.savings || {}; const m = {};
+      PLACES.forEach((pl) => { m[pl.id] = { left: num($(`[data-sv-left="${pl.id}"]`).value), reinvested: num($(`[data-sv-re="${pl.id}"]`).value), note: $(`[data-sv-note="${pl.id}"]`).value }; });
+      I.savings[k] = m; dirty = false;
+    };
+    $("#view").addEventListener("input", (e) => { const d = e.target.dataset; if (d.svLeft || d.svRe || d.svNote) { dirty = true; $("#svDirty").hidden = false; refresh(); } }, sig);
+    $("#svSave").onclick = () => { saveSv(); commit(); };
+    $("#svUse").onclick = () => {
+      const ex = expectedLeft(k);
+      PLACES.forEach((pl) => { const el = $(`[data-sv-left="${pl.id}"]`); if (!num(el.value) && ex[pl.id] > 0) el.value = fmtInput(ex[pl.id]); });
+      dirty = true; $("#svDirty").hidden = false; refresh();
+    };
+    window.onbeforeunload = () => { if (dirty) { saveSv(); save(); } };
+  }
 
   function proposalsHtml() {
     if (!proposals) return "";
@@ -981,7 +1101,7 @@ Amounts are positive numbers without currency symbols. Do not invent items you c
   // ---------- render + events ----------
   function render() {
     let route = (location.hash || "#dashboard").slice(1);
-    route = { flows: "expenses", brain: "journal" }[route] || route;
+    route = { flows: "expenses", brain: "journal", wealth: "savings" }[route] || route;
     if (!views[route]) route = "dashboard";
     const fn = views[route];
     document.querySelectorAll("#nav a, #nav2 a").forEach((a) => a.classList.toggle("on", a.getAttribute("href") === "#" + route));
@@ -997,6 +1117,7 @@ Amounts are positive numbers without currency symbols. Do not invent items you c
   function wire(route) {
     if (incAbort && route !== "income") { incAbort.abort(); incAbort = null; window.onbeforeunload = null; }
     if (alAbort && route !== "allocation") { alAbort.abort(); alAbort = null; window.onbeforeunload = null; }
+    if (svAbort && route !== "savings") { svAbort.abort(); svAbort = null; window.onbeforeunload = null; }
     const v = $("#view");
     // shared month navigation (dashboard, allocation, expenses)
     v.querySelectorAll("[data-mnav],[data-dshift]").forEach((b) => b.addEventListener("click", () => { incMonth = shiftMonth(incomeMonthSafe(), +(b.dataset.mnav || b.dataset.dshift)); render(); }));
@@ -1018,10 +1139,14 @@ Amounts are positive numbers without currency symbols. Do not invent items you c
 
     if (route === "income") wireIncome();
     if (route === "allocation") wireAllocation();
+    if (route === "savings") wireSavings();
     if (route === "expenses") {
-      const kind = $("#kindSel"), cat = $("#catSel");
-      kind.onchange = () => (cat.innerHTML = (kind.value === "income" ? INCOME_CATS : EXPENSE_CATS).map((c) => `<option>${c}</option>`).join(""));
-      $("#txForm").onsubmit = (e) => { e.preventDefault(); const x = formData(e.target); S.transactions.push({ id: uid(), ...x, amount: +x.amount }); commit(); };
+      $("#exForm").onsubmit = (e) => {
+        e.preventDefault(); const x = formData(e.target); const amount = num(x.amount); if (!amount) return;
+        S.transactions.push({ id: uid(), kind: "expense", date: x.date, month: incomeMonthSafe(), desc: x.desc.trim(), amount, from: x.from, category: x.category.trim() });
+        commit();
+        const f = $("#exForm"); if (f) { f.from.value = x.from; f.date.value = x.date; f.desc.focus(); }
+      };
       $("#csvIn").onchange = (e) => readFile(e.target.files[0], importCsv);
     }
     if (route === "wealth") {
@@ -1089,13 +1214,13 @@ Amounts are positive numbers without currency symbols. Do not invent items you c
     const rows = txt.trim().split(/\r?\n/).map(splitCsv);
     let n = 0;
     rows.forEach((r) => {
-      const [date, desc, amt, cat] = r; const a = parseFloat(String(amt).replace(/[^0-9.\-]/g, ""));
-      if (!/^\d{4}-\d{2}-\d{2}/.test(date) || isNaN(a)) return;
-      const kind = a < 0 ? "expense" : "income";
-      S.transactions.push({ id: uid(), date: date.slice(0, 10), desc, amount: Math.abs(a), kind, category: cat || (kind === "income" ? "Other income" : "Other") });
+      const [date, desc, amt, cat, from] = r; const a = parseFloat(String(amt).replace(/[^0-9.\-]/g, ""));
+      if (!/^\d{4}-\d{2}-\d{2}/.test(date) || isNaN(a) || !a) return;
+      const src = SOURCES.find((x) => x.name.toLowerCase() === String(from || "").toLowerCase() || x.id === String(from || "").toLowerCase());
+      S.transactions.push({ id: uid(), kind: "expense", date: date.slice(0, 10), month: incomeMonthSafe(), desc, amount: Math.abs(a), category: cat || "Uncategorized", from: src ? src.id : "other" });
       n++;
     });
-    commit(); alert(`Imported ${n} transactions.`);
+    commit(); alert(`Imported ${n} expenses.`);
   }
   function splitCsv(line) {
     const out = []; let cur = "", q = false;
