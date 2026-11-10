@@ -33,7 +33,7 @@
     ];
     const streams = []; let n = 0;
     groups.forEach(([group, recurring, names]) => names.forEach((name) => streams.push({ id: "st" + ++n, name, group, recurring, status: "Live" })));
-    return { goal: 5500000, interestGoal: 1500000, goalDate: "", streams, destinations: allocSeed(), entries: {}, allocations: {}, savings: {} };
+    return { goal: 5500000, interestGoal: 1500000, goalDate: "", streams, destinations: allocSeed(), entries: {}, allocations: {}, savings: {}, yearEnd: { low: 8000000, high: 9000000, date: "2026-12-31", purpose: "Send to the Swiss bank or invest" } };
   }
 
   // Where each month's income goes. "budget" is the monthly plan; actuals live in income.allocations[month][id].
@@ -407,10 +407,38 @@
           <div class="kv"><span>Left to invest in ${esc(k.slice(0, 4))}</span><b>${esc(money(ytdLeft))}</b></div>
           <div class="kv"><span>Reinvested in ${esc(k.slice(0, 4))}</span><b>${esc(money(ytdRe))}</b></div>
           <div class="hint" style="margin-top:6px"><a href="#savings">Update balances ›</a></div>`)}
-        ${section(5, "Monthly checklist", checklist(k), 12)}
+        ${section(5, "Year-end target", yearEndCard(k), 12)}
+        ${section(6, "Monthly checklist", checklist(k), 12)}
         <div class="card span-12"><h2>Income by month</h2>${incomeChart(k)}</div>
       </div>`;
   };
+  // Liquid money by the target date: balances now + what each remaining month should leave.
+  function yearEndCard(k) {
+    const Y = S.income.yearEnd || {}; if (!Y.low) return '<p class="empty">Set a target in Savings.</p>';
+    const sv = savingsOf(k), have = sv.left, cur = lastMonths(1)[0];
+    const end = Y.date || (k.slice(0, 4) + "-12-31"), endK = end.slice(0, 7);
+    let monthsAfter = 0; for (let m = shiftMonth(cur, 1); m <= endK; m = shiftMonth(m, 1)) monthsAfter++;
+    const done = lastMonths(6).filter((m) => m <= cur && incomeTotal(m).has);
+    const avgLeft = done.length ? sum(done, (m) => incomeTotal(m).total - spendFull(m).total) / done.length : 0;
+    const proj = have + monthsAfter * avgLeft;
+    const unalloc = Math.max(0, incomeTotal(cur).total - allocatedBy(cur).total);
+    const gapLow = Math.max(0, Y.low - have), gapHigh = Math.max(0, Y.high - have);
+    const need = monthsAfter ? gapLow / monthsAfter : gapLow;
+    const r = Math.min(1, have / Y.high), rl = Math.min(1, Y.low / Y.high), rp = Math.min(1, proj / Y.high);
+    return `<div class="hint">${esc(money(Y.low, true))}–${esc(money(Y.high, true))} liquid by ${esc(end)} · ${esc(Y.purpose || "")} · <a href="#savings">Edit ›</a></div>
+      <div class="ye-bar" data-tip="Now ${esc(money(have))} · projected ${esc(money(proj))}">
+        <div class="ye-proj" style="width:${rp * 100}%"></div><div class="ye-now" style="width:${r * 100}%"></div>
+        <i style="left:${rl * 100}%"></i><span style="left:${rl * 100}%">${esc(money(Y.low, true))}</span><span style="left:100%;transform:translateX(-100%)">${esc(money(Y.high, true))}</span>
+      </div>
+      <div class="legend" style="margin-top:22px"><span><i style="background:var(--s3)"></i>Have now</span><span><i style="background:var(--accent-soft)"></i>Projected</span></div>
+      <div class="kv"><span>Have now (all places, incl. loan to be repaid)</span><b>${esc(money(have))}</b></div>
+      <div class="kv"><span>Gap to ${esc(money(Y.low, true))} / ${esc(money(Y.high, true))}</span><b>${esc(money(gapLow))} / ${esc(money(gapHigh))}</b></div>
+      <div class="kv"><span>Needed per month (${monthsAfter} month${monthsAfter === 1 ? "" : "s"} left after ${esc(monthLabel(cur))})</span><b>${esc(money(need))}</b></div>
+      <div class="kv"><span>Left to invest per month so far</span><b>${esc(money(avgLeft))}</b></div>
+      <div class="kv"><span>Projected at that pace</span><b class="${proj >= Y.low ? "pos" : "neg"}">${esc(money(proj))}</b></div>
+      ${unalloc ? `<div class="kv"><span>Income not yet placed in any balance</span><b class="muted">+${esc(money(unalloc))}</b></div>` : ""}`;
+  }
+
   // What to upload each month and whether it has arrived. Income for a month is reported early the next month.
   function checklist(k) {
     const I = S.income, e = I.entries[k] || {}, [y, m] = k.split("-").map(Number);
@@ -1002,6 +1030,15 @@ ONE DECISION FOR NEXT MONTH
           ${isFinite(saved) && Math.abs(gap) > 1000 ? `<p class="sub" style="margin:10px 0 0"><b>${esc(money(Math.abs(gap)))} ${gap > 0 ? "of what was left after expenses does not show up in the balances or reinvestment. Likely an expense not logged yet." : "more saved than income minus expenses. Likely income not logged yet."}</b></p>` : ""}
           <p class="saved-note" id="svDirty" hidden>Unsaved changes</p>
         </div>
+        <details class="card span-12 fold"><summary><h2>Year-end target</h2></summary>
+          <form class="row" id="yeForm">
+            <label class="f">Low<input name="low" inputmode="decimal" value="${fmtInput((S.income.yearEnd || {}).low || 0)}"></label>
+            <label class="f">High<input name="high" inputmode="decimal" value="${fmtInput((S.income.yearEnd || {}).high || 0)}"></label>
+            <label class="f">By<input type="date" name="date" value="${esc((S.income.yearEnd || {}).date || "")}"></label>
+            <label class="f" style="flex:1">Purpose<input name="purpose" value="${esc((S.income.yearEnd || {}).purpose || "")}"></label>
+            <button>Save target</button>
+          </form>
+        </details>
       </div>`;
   };
 
@@ -1019,6 +1056,7 @@ ONE DECISION FOR NEXT MONTH
     };
     $("#view").addEventListener("input", (e) => { const d = e.target.dataset; if (d.svLeft || d.svRe || d.svNote) { dirty = true; $("#svDirty").hidden = false; refresh(); } }, sig);
     $("#svSave").onclick = () => { saveSv(); commit(); };
+    $("#yeForm").onsubmit = (e) => { e.preventDefault(); if (dirty) saveSv(); const x = formData(e.target); I.yearEnd = { low: num(x.low), high: num(x.high) || num(x.low), date: x.date, purpose: x.purpose }; commit(); };
     window.onbeforeunload = () => { if (dirty) { saveSv(); save(); } };
   }
 
