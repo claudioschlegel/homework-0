@@ -52,11 +52,13 @@
       ["a11", "Red media", "Payments", "Video footage (starting soon)", 0],
       ["a12", "Costo social", "Operating costs", "Social security cost of the salaries", 0],
       ["a13", "Bitline interest", "Operating costs", "Covers interest of the Bitline operation", 20000],
+      ["a14", "Saldo · Quantamex", "Savings", "Money moved to your Saldo balance", 0],
     ].map(([id, name, group, purpose, budget]) => ({ id, name, group, purpose, budget }));
   }
   function normalizeIncome(inc) {
     const out = Object.assign(incomeSeed(), inc || {});
     if (!out.destinations.length || !out.destinations[0].group) out.destinations = allocSeed(); // old flat list, never used
+    allocSeed().forEach((d) => { if (!out.destinations.some((x) => x.id === d.id) && d.id === "a14") out.destinations.push(d); });
     return out;
   }
   let S = load();
@@ -109,12 +111,13 @@
   const sum = (arr, f) => arr.reduce((a, x) => a + (f ? f(x) : x), 0);
 
   // ---------- metrics ----------
-  const ALLOC_GROUPS = ["Bank · BBVA", "TRF cards", "Cash", "Payments", "Operating costs"];
+  const ALLOC_GROUPS = ["Bank · BBVA", "TRF cards", "Cash", "Payments", "Operating costs", "Savings"];
   const ALLOC_NOTE = {
     "Bank · BBVA": "Salaries and bonuses. Dividends from Podemos Progresar also arrive here via Loggia (tracked in Income).",
     "TRF cards": "Day-to-day spending that is not tax deductible.",
     "Payments": "Team and service providers.",
     "Operating costs": "Costs of running the structure.",
+    "Savings": "Money moved straight to your Saldo balance.",
   };
   // Where an expense was paid from. "budget" maps each source to the allocation lines that fund it.
   const SOURCES = [
@@ -127,9 +130,9 @@
     { id: "other", name: "Other" },
   ];
   const PLACES = [
-    { id: "loggia", name: "Loggia", hint: "Holding company. Income not sent out, plus what Loggia did not spend." },
-    { id: "bbva", name: "BBVA", hint: "What is left of the salaries after spending." },
-    { id: "saldo", name: "Saldo", hint: "Balances left on the TRF cards and in cash." },
+    { id: "loggia", name: "Loggia", hint: "Cash held in the holding company." },
+    { id: "bbva", name: "BBVA", hint: "Balance left in your BBVA account." },
+    { id: "saldo", name: "Saldo", hint: "Your running Saldo balance (Quantamex ledger)." },
   ];
   const CAT_SUGGEST = ["Household", "Food & dining", "Family", "Health", "Transport", "Travel", "Shopping", "Team", "Services", "Taxes", "Interest & fees", "Giving", "Other"];
   const expMonth = (t) => t.month || ym(t.date);
@@ -332,7 +335,7 @@
     const groupRows = GROUPS.map((g) => ({ k: g, v: inc.groups[g] || 0, c: GROUP_COLOR[g] })).filter((r) => r.v > 0);
     const catRows = Object.entries(spend.cats).map(([c, v]) => ({ k: c, v, c: "var(--s2)" })).sort((a, b) => b.v - a.v).slice(0, 8);
     const al = allocatedBy(k);
-    const srcRows = SOURCES.filter((src) => (spend.sources[src.id] || 0) || sourceBudget(src)).map((src) => {
+    const srcRows = SOURCES.filter((src) => (spend.sources[src.id] || 0) || sourceBudget(src) || al.sources[src.id]).map((src) => {
       const spent = spend.sources[src.id] || 0, sent = al.sources[src.id] || sourceBudget(src);
       return bva(src.name, spent, sent, al.sources[src.id] ? "sent" : "planned");
     }).join("");
@@ -785,9 +788,9 @@ ONE DECISION FOR NEXT MONTH
       return `<tbody>
         <tr class="grp-head"><th>${esc(g)}${ALLOC_NOTE[g] ? `<div class="row-note" style="font-weight:400">${esc(ALLOC_NOTE[g])}</div>` : ""}</th>
           <th class="num muted">${bud.groups[g] ? esc(money(bud.groups[g])) : ""}</th><th class="num" data-gsum="${esc(g)}">${esc(money(allocatedBy(k).groups[g] || 0))}</th></tr>
-        ${list.map((d) => `<tr><td>${esc(d.name)}${d.purpose ? `<div class="row-note">${esc(d.purpose)}</div>` : ""}</td>
+        ${list.map((d) => { const an = ((I.allocNotes || {})[k] || {})[d.id]; return `<tr><td>${esc(d.name)}${d.purpose ? `<div class="row-note">${esc(d.purpose)}</div>` : ""}${an ? `<div class="row-note">${esc(an)}</div>` : ""}</td>
           <td class="num muted">${d.budget ? esc(money(+d.budget)) : "–"}</td>
-          <td class="num"><input class="amt-in" inputmode="decimal" data-act="${d.id}" value="${fmtInput(+a[d.id] || 0)}" placeholder="0"></td></tr>`).join("")}
+          <td class="num"><input class="amt-in" inputmode="decimal" data-act="${d.id}" value="${fmtInput(+a[d.id] || 0)}" placeholder="0"></td></tr>`; }).join("")}
       </tbody>`;
     }).join("");
     const planRows = I.destinations.map((d) => `<tr>
@@ -803,7 +806,7 @@ ONE DECISION FOR NEXT MONTH
       <div class="grid">
         <div class="card tile span-4"><div class="label">Income ${esc(monthLabel(k))}</div><div class="value">${esc(money(inc.total))}</div><div class="hint"><a href="#income">From Income ›</a></div></div>
         <div class="card tile span-4"><div class="label">Allocated</div><div class="value" id="alTotal">${esc(money(allocated))}</div><div class="hint">Plan ${esc(money(bud.total))} per month</div></div>
-        <div class="card tile span-4"><div class="label">Stays in Loggia</div><div class="value ${left < 0 ? "neg" : ""}" id="alLeft">${esc(money(left))}</div><div class="hint">Income not sent out. At goal: ${esc(money((+I.goal || 0) - bud.total))}</div></div>
+        <div class="card tile span-4"><div class="label">Not yet allocated</div><div class="value ${left < 0 ? "neg" : ""}" id="alLeft">${esc(money(left))}</div><div class="hint">Income not sent anywhere yet</div></div>
         <div class="card span-12"><div class="card-head"><h2>${esc(monthLabel(k))}</h2><span><button id="alCopy">Use plan amounts</button> <button class="primary" id="alSave">Save month</button></span></div>
           <div class="table-wrap"><table class="inc-table">
             <thead><tr><th>Line</th><th class="num">Plan</th><th class="num">Actual</th></tr></thead>
@@ -894,7 +897,7 @@ ONE DECISION FOR NEXT MONTH
         <div class="card span-12"><h2>${esc(monthLabel(k))} expenses</h2>
           <div class="table-wrap"><table>
             <thead><tr><th>Date</th><th>Paid to</th><th>Category</th><th>From</th><th class="num">Amount</th><th></th></tr></thead>
-            <tbody>${list.map((t) => `<tr><td>${esc(t.date)}</td><td>${esc(t.desc)}</td><td>${esc(t.category)}</td><td>${esc(srcName(t.from))}</td>
+            <tbody>${list.map((t) => `<tr><td>${esc(t.date)}</td><td>${esc(t.desc)}${t.note ? `<div class="row-note">${esc(t.note)}</div>` : ""}</td><td>${esc(t.category)}</td><td>${esc(srcName(t.from))}</td>
               <td class="num">${esc(money(+t.amount))}</td><td><button class="link" data-del-tx="${t.id}" aria-label="Delete">✕</button></td></tr>`).join("") || `<tr><td colspan="6" class="empty">Nothing logged for ${esc(monthLabel(k))} yet.</td></tr>`}</tbody>
           </table></div>
           <details><summary>Import CSV (date, paid to, amount, category, from)</summary>
@@ -906,32 +909,33 @@ ONE DECISION FOR NEXT MONTH
   };
 
   views.savings = () => {
-    const k = incomeMonthSafe(), inc = incomeTotal(k).total, spend = monthSpend(k).total, left = inc - spend;
-    const sv = savingsOf(k), ex = expectedLeft(k);
-    const rows = PLACES.map((pl) => { const r = sv.places[pl.id] || {}; return `<tr>
-      <td>${esc(pl.name)}<div class="row-note">${esc(pl.hint)}</div></td>
-      <td class="num ${ex[pl.id] < 0 ? "neg" : "muted"}">${esc(money(ex[pl.id]))}</td>
+    const k = incomeMonthSafe(), prevK = shiftMonth(k, -1), inc = incomeTotal(k).total, spend = monthSpend(k).total, left = inc - spend;
+    const sv = savingsOf(k), pv = savingsOf(prevK);
+    const rows = PLACES.map((pl) => { const r = sv.places[pl.id] || {}, pr = pv.places[pl.id] || {}; const ch = pv.has ? (+r.left || 0) - (+pr.left || 0) : NaN; return `<tr>
+      <td>${esc(pl.name)}<div class="row-note">${esc(pl.hint)}</div>${r.note ? `<div class="row-note">${esc(r.note)}</div>` : ""}</td>
+      <td class="num muted prevcol">${pv.has ? esc(money(+pr.left || 0)) : "–"}</td>
       <td class="num"><input class="amt-in" inputmode="decimal" data-sv-left="${pl.id}" value="${fmtInput(+r.left || 0)}" placeholder="0"></td>
+      <td class="num ${isFinite(ch) ? (ch >= 0 ? "pos" : "neg") : ""}">${isFinite(ch) ? (ch >= 0 ? "+" : "") + esc(money(ch)) : ""}</td>
       <td class="num"><input class="amt-in" inputmode="decimal" data-sv-re="${pl.id}" value="${fmtInput(+r.reinvested || 0)}" placeholder="0"></td>
-      <td><input data-sv-note="${pl.id}" value="${esc(r.note || "")}" placeholder="Where it was invested"></td></tr>`; }).join("");
-    const gap = left - sv.left;
+      <td><input data-sv-note="${pl.id}" value="${esc(r.note || "")}" placeholder="Note"></td></tr>`; }).join("");
+    const saved = pv.has ? sv.left - pv.left + sv.reinvested : NaN;
+    const gap = left - saved;
     return `
       <h1>Savings</h1>
-      <p class="sub">What is left after all expenses, where it sits (Loggia, BBVA, Saldo) and how much of it gets reinvested.</p>
+      <p class="sub">What is left after all expenses, where it sits (Loggia, BBVA, Saldo) and how much of it gets reinvested. Enter each place's balance at month end.</p>
       ${monthNav()}
       <div class="grid">
-        <div class="card tile span-3"><div class="label">Income</div><div class="value">${esc(money(inc))}</div></div>
-        <div class="card tile span-3"><div class="label">Expenses</div><div class="value">${esc(money(spend))}</div></div>
-        <div class="card tile span-3"><div class="label">Left after expenses</div><div class="value ${left < 0 ? "neg" : ""}">${esc(money(left))}</div><div class="hint">${pct(inc ? left / inc : NaN)} of income</div></div>
+        <div class="card tile span-3"><div class="label">Left after expenses</div><div class="value ${left < 0 ? "neg" : ""}">${esc(money(left))}</div><div class="hint">${esc(money(inc))} income − ${esc(money(spend))} expenses</div></div>
+        <div class="card tile span-3"><div class="label">Total balance</div><div class="value" id="svLeft0">${esc(money(sv.left))}</div><div class="hint">Loggia + BBVA + Saldo at month end</div></div>
         <div class="card tile span-3"><div class="label">Reinvested</div><div class="value" id="svRe">${esc(money(sv.reinvested))}</div><div class="hint">${pct(left > 0 ? sv.reinvested / left : NaN)} of what was left</div></div>
-        <div class="card span-12"><div class="card-head"><h2>${esc(monthLabel(k))} · where the money was left</h2><span><button id="svUse">Use expected</button> <button class="primary" id="svSave">Save month</button></span></div>
+        <div class="card tile span-3"><div class="label">Saved this month</div><div class="value">${isFinite(saved) ? esc(money(saved)) : "–"}</div><div class="hint">${isFinite(saved) ? "Balance change + reinvested" : `Needs ${esc(monthLabel(prevK))} balances`}</div></div>
+        <div class="card span-12"><div class="card-head"><h2>${esc(monthLabel(k))} · balances and reinvestment</h2><span><button class="primary" id="svSave">Save month</button></span></div>
           <div class="table-wrap"><table class="inc-table sv-table">
-            <thead><tr><th>Place</th><th class="num">Expected</th><th class="num">Left</th><th class="num">Reinvested</th><th>Note</th></tr></thead>
+            <thead><tr><th>Place</th><th class="num prevcol">${esc(monthLabel(prevK))}</th><th class="num">Balance</th><th class="num">Change</th><th class="num">Reinvested</th><th>Note</th></tr></thead>
             <tbody>${rows}</tbody>
-            <tfoot><tr><th>Total</th><th class="num">${esc(money(ex.loggia + ex.bbva + ex.saldo))}</th><th class="num" id="svLeft">${esc(money(sv.left))}</th><th class="num" id="svRe2">${esc(money(sv.reinvested))}</th><th></th></tr></tfoot>
+            <tfoot><tr><th>Total</th><th class="num prevcol">${pv.has ? esc(money(pv.left)) : "–"}</th><th class="num" id="svLeft">${esc(money(sv.left))}</th><th class="num">${pv.has ? esc(money(sv.left - pv.left)) : ""}</th><th class="num" id="svRe2">${esc(money(sv.reinvested))}</th><th></th></tr></tfoot>
           </table></div>
-          <p class="sub" style="margin:10px 0 0">Expected = income minus what was sent out (stays in Loggia), plus what was sent but not spent. Confirm with the real month-end balances.
-            ${sv.has && Math.abs(gap) > 1 ? `<br><b class="${gap > 0 ? "neg" : ""}">${esc(money(Math.abs(gap)))} ${gap > 0 ? "of the money left after expenses is not in any of the three places yet. Likely an expense not logged." : "more in the three places than income minus expenses. Check for income not logged."}</b>` : ""}</p>
+          ${isFinite(saved) && Math.abs(gap) > 1000 ? `<p class="sub" style="margin:10px 0 0"><b>${esc(money(Math.abs(gap)))} ${gap > 0 ? "of what was left after expenses does not show up in the balances or reinvestment. Likely an expense not logged yet." : "more saved than income minus expenses. Likely income not logged yet."}</b></p>` : ""}
           <p class="saved-note" id="svDirty" hidden>Unsaved changes</p>
         </div>
       </div>`;
@@ -943,7 +947,7 @@ ONE DECISION FOR NEXT MONTH
     const sig = { signal: svAbort.signal }, I = S.income, k = incomeMonthSafe();
     let dirty = false;
     const tot = (attr) => sum([...document.querySelectorAll(`[data-sv-${attr}]`)], (el) => num(el.value));
-    const refresh = () => { $("#svLeft").textContent = money(tot("left")); $("#svRe2").textContent = money(tot("re")); };
+    const refresh = () => { $("#svLeft").textContent = money(tot("left")); $("#svLeft0").textContent = money(tot("left")); $("#svRe2").textContent = money(tot("re")); $("#svRe").textContent = money(tot("re")); };
     const saveSv = () => {
       I.savings = I.savings || {}; const m = {};
       PLACES.forEach((pl) => { m[pl.id] = { left: num($(`[data-sv-left="${pl.id}"]`).value), reinvested: num($(`[data-sv-re="${pl.id}"]`).value), note: $(`[data-sv-note="${pl.id}"]`).value }; });
@@ -951,11 +955,6 @@ ONE DECISION FOR NEXT MONTH
     };
     $("#view").addEventListener("input", (e) => { const d = e.target.dataset; if (d.svLeft || d.svRe || d.svNote) { dirty = true; $("#svDirty").hidden = false; refresh(); } }, sig);
     $("#svSave").onclick = () => { saveSv(); commit(); };
-    $("#svUse").onclick = () => {
-      const ex = expectedLeft(k);
-      PLACES.forEach((pl) => { const el = $(`[data-sv-left="${pl.id}"]`); if (!num(el.value) && ex[pl.id] > 0) el.value = fmtInput(ex[pl.id]); });
-      dirty = true; $("#svDirty").hidden = false; refresh();
-    };
     window.onbeforeunload = () => { if (dirty) { saveSv(); save(); } };
   }
 
