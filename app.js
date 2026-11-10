@@ -131,7 +131,8 @@
   ];
   const PLACES = [
     { id: "loggia", name: "Loggia", hint: "Cash held in the holding company." },
-    { id: "bbva", name: "BBVA", hint: "Balance left in your BBVA account." },
+    { id: "bbva", name: "BBVA", hint: "Available balance in your BBVA account." },
+    { id: "patrimonial", name: "BBVA Patrimonial", hint: "Short-term liquidity funds, about 6.5% a year. Invested, but can be withdrawn quickly.", tag: "invested · 6.5%" },
     { id: "saldo", name: "Saldo", hint: "Your running Saldo balance (Quantamex ledger)." },
     { id: "loans", name: "Loans out", hint: "Money lent that will be paid back. Still yours, just not available.", locked: true },
   ];
@@ -364,7 +365,7 @@
     const catRows = Object.entries(sp.cats).sort((a, b) => b[1] - a[1]).map(([c, v]) => `<tr><td>${pendNames.has(c) ? `<span class="muted">${esc(c)}</span>` : esc(c)}</td><td class="num">${esc(money(v))}</td><td class="num muted">${pct(sp.total ? v / sp.total : NaN)}</td></tr>`).join("");
     const pendTotal = sum(sp.pending.filter((x) => x.kind === "card"), (x) => x.v);
     // where the money sits
-    const places = PLACES.map((pl) => ({ k: pl.name, v: +((sv.places[pl.id] || {}).left) || 0, c: "var(--s3)", note: (sv.places[pl.id] || {}).note || "", locked: !!pl.locked }));
+    const places = PLACES.map((pl) => ({ k: pl.name, v: +((sv.places[pl.id] || {}).left) || 0, c: "var(--s3)", note: (sv.places[pl.id] || {}).note || "", locked: !!pl.locked, tag: pl.tag || "" }));
     const yr = lastMonths(12).filter((m) => m.slice(0, 4) === k.slice(0, 4) && m <= k);
     const ytdLeft = sum(yr, (m) => incomeTotal(m).total - spendFull(m).total), ytdRe = sum(yr, (m) => savingsOf(m).reinvested);
     const reYield = sv.reinvested * 0.02;
@@ -399,7 +400,7 @@
         ${section(4, "Left to invest", `<div class="big ${left < 0 ? "neg" : ""}">${esc(money(left))}</div>
           <div class="hint">Income − all expenses and payments in ${esc(monthLabel(k))}</div>
           <div class="label" style="margin-top:6px">Where it sits now</div>
-          ${places.filter((r) => r.v || !r.locked).map((r) => `<div class="kv"><span>${esc(r.k)}${/estimate/i.test(r.note) ? ' <span class="tag">estimate</span>' : ""}${r.locked ? ' <span class="tag">not available</span>' : ""}</span><b>${esc(money(r.v))}</b></div>`).join("")}
+          ${places.filter((r) => r.v || !r.locked).map((r) => `<div class="kv"><span>${esc(r.k)}${/estimate/i.test(r.note) ? ' <span class="tag">estimate</span>' : ""}${r.locked ? ' <span class="tag">not available</span>' : ""}${r.tag ? ` <span class="tag">${esc(r.tag)}</span>` : ""}</span><b>${esc(money(r.v))}</b></div>`).join("")}
           <div class="kv"><span><b>Total</b></span><b>${esc(money(sv.left))}</b></div>
           <div class="kv"><span>Reinvested this month</span><b>${esc(money(sv.reinvested))}</b></div>
           ${sv.reinvested ? `<div class="kv"><span>Adds to interest income at ~2%/mo</span><b>${esc(money(reYield))}/mo</b></div>` : ""}
