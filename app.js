@@ -33,11 +33,31 @@
     ];
     const streams = []; let n = 0;
     groups.forEach(([group, recurring, names]) => names.forEach((name) => streams.push({ id: "st" + ++n, name, group, recurring, status: "Live" })));
-    const destinations = [
-      ["d1", "Salary · BBVA", ""], ["d2", "TRF · daily expenses", ""], ["d3", "Fácil card · online shopping", ""],
-      ["d4", "Cash", ""], ["d5", "Regina · TRF", "Regina"], ["d6", "Regina · Cash", "Regina"], ["d7", "PR", ""],
-    ].map(([id, name, parent]) => ({ id, name, parent }));
-    return { goal: 5500000, interestGoal: 1500000, goalDate: "", streams, destinations, entries: {}, allocations: {} };
+    return { goal: 5500000, interestGoal: 1500000, goalDate: "", streams, destinations: allocSeed(), entries: {}, allocations: {} };
+  }
+
+  // Where each month's income goes. "budget" is the monthly plan; actuals live in income.allocations[month][id].
+  function allocSeed() {
+    return [
+      ["a1", "Salary 1", "Bank · BBVA", "Monthly salary to BBVA", 1250000],
+      ["a2", "Salary 2", "Bank · BBVA", "Monthly salary to BBVA", 1200000],
+      ["a3", "Salary 3", "Bank · BBVA", "Monthly salary to BBVA", 450000],
+      ["a4", "Bonus", "Bank · BBVA", "Paid some months", 0],
+      ["a5", "TRF · CS", "TRF cards", "Daily expenses, not tax deductible", 0],
+      ["a6", "TRF · RV", "TRF cards", "My wife's monthly expenses", 0],
+      ["a7", "Cash", "Cash", "", 0],
+      ["a8", "José Andrés", "Payments", "Chief of staff", 25000],
+      ["a9", "PR", "Payments", "", 20000],
+      ["a10", "LinkedIn media", "Payments", "Personal brand strategy", 19000],
+      ["a11", "Red media", "Payments", "Video footage (starting soon)", 0],
+      ["a12", "Costo social", "Operating costs", "Social security cost of the salaries", 0],
+      ["a13", "Bitline interest", "Operating costs", "Covers interest of the Bitline operation", 20000],
+    ].map(([id, name, group, purpose, budget]) => ({ id, name, group, purpose, budget }));
+  }
+  function normalizeIncome(inc) {
+    const out = Object.assign(incomeSeed(), inc || {});
+    if (!out.destinations.length || !out.destinations[0].group) out.destinations = allocSeed(); // old flat list, never used
+    return out;
   }
   let S = load();
 
@@ -46,6 +66,7 @@
       const raw = localStorage.getItem(KEY);
       if (raw) {
         const st = Object.assign(blank(), JSON.parse(raw));
+        st.income = normalizeIncome(st.income);
         if (!st.v) { st.v = 2; if (st.isSample) { st.regenSample = true; } }
         return st;
       }
@@ -88,12 +109,33 @@
   const sum = (arr, f) => arr.reduce((a, x) => a + (f ? f(x) : x), 0);
 
   // ---------- metrics ----------
+  const ALLOC_GROUPS = ["Bank · BBVA", "TRF cards", "Cash", "Payments", "Operating costs"];
+  const ALLOC_NOTE = {
+    "Bank · BBVA": "Salaries and bonuses. Dividends from Podemos Progresar also arrive here via Loggia (tracked in Income).",
+    "TRF cards": "Day-to-day spending that is not tax deductible.",
+    "Payments": "Team and service providers.",
+    "Operating costs": "Costs of running the structure.",
+  };
+  function otherSpend(k) { return sum(S.transactions.filter((t) => t.kind === "expense" && ym(t.date) === k), (t) => +t.amount); }
+  function monthSpend(k) {
+    const a = (S.income.allocations || {})[k] || {};
+    const by = { total: 0, groups: {}, other: otherSpend(k), has: false };
+    ALLOC_GROUPS.forEach((g) => (by.groups[g] = 0));
+    S.income.destinations.forEach((d) => { const v = +a[d.id] || 0; if (v) { by.has = true; by.groups[d.group] = (by.groups[d.group] || 0) + v; by.total += v; } });
+    by.total += by.other; if (by.other) by.has = true;
+    return by;
+  }
+  function budgetBy() {
+    const by = { total: 0, groups: {} };
+    S.income.destinations.forEach((d) => { by.groups[d.group] = (by.groups[d.group] || 0) + (+d.budget || 0); by.total += +d.budget || 0; });
+    return by;
+  }
   function monthFlows(key) {
     const tx = S.transactions.filter((t) => ym(t.date) === key);
     // The Income module is the source of truth for any month it has entries for.
     const inc = incomeTotal(key);
     const income = inc.has ? inc.total : sum(tx.filter((t) => t.kind === "income"), (t) => +t.amount);
-    const expense = sum(tx.filter((t) => t.kind === "expense"), (t) => +t.amount);
+    const expense = monthSpend(key).total;
     return { income, expense, net: income - expense };
   }
   function netWorth() {
@@ -237,7 +279,7 @@
     inv.forEach((a) => { if (invTotal && a.value / invTotal > 0.4 && inv.length > 1) out.push(["warn", `${a.name} is ${pct(a.value / invTotal)} of invested assets. Is that concentration a decision or an accident?`]); });
     S.goals.forEach((g) => { const gp = goalProgress(g); if (!gp.onTrack) out.push(["warn", `${g.name} needs ${money(gp.needed)}/month to hit its deadline. You plan ${money(+g.monthly || 0)}.`]); });
     const lastReview = S.notes.filter((n) => n.type === "Monthly review").sort((a, b) => b.date.localeCompare(a.date))[0];
-    if (!lastReview || monthsBetween(lastReview.date, today()) >= 1) out.push(["", `No monthly review logged for ${monthLabel(prev)} yet. Second Brain has a template that pre-fills your numbers.`]);
+    if (!lastReview || monthsBetween(lastReview.date, today()) >= 1) out.push(["", `No monthly review logged for ${monthLabel(prev)} yet. The Journal has a template that pre-fills your numbers.`]);
     return out;
   }
 
@@ -245,70 +287,41 @@
   const views = {};
 
   views.dashboard = () => {
-    const months = lastMonths(12);
-    const cur = monthFlows(months[11]);
-    const ytdKeys = months.filter((k) => k.startsWith(String(new Date().getFullYear())));
-    const ytd = ytdKeys.reduce((a, k) => { const f = monthFlows(k); a.i += f.income; a.e += f.expense; return a; }, { i: 0, e: 0 });
-    const burn = avgExpense();
-    const runway = burn ? liquid() / burn : 0;
-    const nw = netWorth();
-    const snaps = [...S.snapshots].sort((a, b) => a.date.localeCompare(b.date));
-    const prevSnap = snaps.filter((s) => ym(s.date) < months[11]).pop();
-    const nwDelta = prevSnap ? nw - prevSnap.value : null;
-
-    const cats = {};
-    S.transactions.filter((t) => t.kind === "expense" && ym(t.date) >= months[9]).forEach((t) => (cats[t.category] = (cats[t.category] || 0) + +t.amount));
-    const catRows = Object.entries(cats).map(([k, v]) => ({ k, v })).sort((a, b) => b.v - a.v);
-    const alloc = {};
-    S.accounts.filter((a) => a.type !== "Debt").forEach((a) => (alloc[a.type] = (alloc[a.type] || 0) + +a.value));
-    const allocRows = Object.entries(alloc).map(([k, v]) => ({ k, v })).sort((a, b) => b.v - a.v);
-
-    const tiles = [
-      ["Net worth", money(nw), nwDelta == null ? "Assets minus debt" : `${nwDelta >= 0 ? "+" : ""}${money(nwDelta)} vs last snapshot`, nwDelta == null ? "" : nwDelta >= 0 ? "pos" : "neg"],
-      ["This month net", money(cur.net), `${money(cur.income)} in · ${money(cur.expense)} out`, cur.net >= 0 ? "pos" : "neg"],
-      ["Savings rate YTD", pct(ytd.i ? (ytd.i - ytd.e) / ytd.i : NaN), `${money(ytd.i - ytd.e)} kept of ${money(ytd.i)}`, ""],
-      ["Cash runway", burn ? runway.toFixed(1) + " mo" : "–", `Avg burn ${money(burn)}/mo`, runway && runway < S.settings.emergencyMonths ? "neg" : ""],
-    ];
-    const hasTx = S.transactions.length > 0, hasAcc = S.accounts.length > 0, hasGoals = S.goals.length > 0;
-    const ins = hasTx || hasAcc || hasGoals ? insights() : [];
-
-    // Income first: the headline is the last full month, the current month shows as "so far".
-    const I = S.income, goal = +I.goal || 0, curK = months[11];
-    const fullK = [...months].reverse().find((k) => k < curK && incomeTotal(k).has) || curK;
-    const isCur = fullK === curK;
-    const full = incomeTotal(fullK), now = incomeTotal(curK), prevFull = incomeTotal(shiftMonth(fullK, -1));
-    const ratio = goal ? Math.min(1, full.total / goal) : 0;
-    const chg = prevFull.total ? full.total / prevFull.total - 1 : NaN;
-    const groupRows = GROUPS.map((g) => ({ k: g, v: full.groups[g] || 0, c: GROUP_COLOR[g] })).filter((r) => r.v > 0);
-    const streamRows = I.streams.map((st) => ({ k: st.name + (I.streams.filter((x) => x.name === st.name).length > 1 ? ` (${st.group})` : ""), v: streamVal(fullK, st.id), c: GROUP_COLOR[st.group] }))
-      .filter((r) => r.v > 0).sort((a, b) => b.v - a.v).slice(0, 8);
-    const hero = `
-      <div class="card span-12 hero">
-        <div class="hero-top">
-          <div><div class="label">Monthly income · ${esc(monthLabel(fullK))}${isCur ? " so far" : ""}</div>
-            <div class="hero-value">${esc(money(full.total))}</div>
-            <div class="hint">${isFinite(chg) ? `<span class="${chg >= 0 ? "pos" : "neg"}">${chg >= 0 ? "+" : ""}${pct(chg)}</span> vs ${esc(monthLabel(shiftMonth(fullK, -1)))}` : ""}</div></div>
-          <div class="hero-side">${isCur ? "" : `<div class="label">${esc(monthLabel(curK))} so far</div><div class="side-value">${esc(money(now.total))}</div>`}
-            <a href="#income" class="hint">Update income ›</a></div>
-        </div>
-        ${goalBar("Total income", full.total, goal, "var(--s1)")}
-        ${goalBar("Interest income", full.groups["Interests"] || 0, +I.interestGoal || 0, "var(--s1)")}
-      </div>`;
+    const k = incomeMonthSafe(), prevK = shiftMonth(k, -1);
+    const inc = incomeTotal(k), spend = monthSpend(k), bud = budgetBy(), I = S.income;
+    const goal = +I.goal || 0, left = inc.total - spend.total, plannedLeft = goal - bud.total;
+    const groupRows = GROUPS.map((g) => ({ k: g, v: inc.groups[g] || 0, c: GROUP_COLOR[g] })).filter((r) => r.v > 0);
+    const spendRows = ALLOC_GROUPS.map((g, i) => ({ k: g, v: spend.groups[g] || 0, c: `var(--s${(i % 5) + 1})` })).concat(spend.other ? [{ k: "Other expenses", v: spend.other, c: "var(--muted)" }] : []).filter((r) => r.v > 0);
+    const ytd = lastMonths(12).filter((m) => m.slice(0, 4) === k.slice(0, 4) && m <= k).reduce((a2, m) => a2 + incomeTotal(m).total - monthSpend(m).total, 0);
+    const budgetRows = ALLOC_GROUPS.filter((g) => (bud.groups[g] || 0) || (spend.groups[g] || 0)).map((g) => {
+      const act = spend.groups[g] || 0, plan = bud.groups[g] || 0;
+      return `<div class="bva"><div class="bva-top"><span>${esc(g)}</span><span><b>${esc(money(act))}</b> <span class="muted">of ${plan ? esc(money(plan)) : "no budget"}</span></span></div>
+        <div class="track"><div class="fill" style="width:${plan ? Math.min(100, (act / plan) * 100) : act ? 100 : 0}%;background:${plan && act > plan ? "var(--critical)" : "var(--s2)"}"></div></div></div>`;
+    }).join("");
+    const section = (n, title, body, span = 6) => `<div class="card span-${span} dash-sec"><div class="sec-num">${n}</div><h2>${title}</h2>${body}</div>`;
     return `
       <h1>Dashboard</h1>
-      <p class="sub">Income against your two monthly goals: MXN 5.5M total and MXN 1.5M from interest. More sections appear here as you fill in the other tabs.</p>
+      <div class="month-nav">
+        <button data-dshift="-1" aria-label="Previous month">‹</button>
+        <input type="month" id="dashMonth" value="${k}">
+        <button data-dshift="1" aria-label="Next month">›</button>
+      </div>
       <div class="grid">
-        ${hero}
-        <div class="card span-12"><h2>Income by month</h2>${incomeChart(curK)}</div>
-        <div class="card span-6"><h2>By group · ${esc(monthLabel(fullK))}</h2>${barList(groupRows, full.total)}</div>
-        <div class="card span-6"><h2>Top streams · ${esc(monthLabel(fullK))}</h2>${barList(streamRows, full.total)}</div>
-        ${hasTx || hasAcc ? tiles.map(([l, v, h, c]) => `<div class="card tile span-3"><div class="label">${l}</div><div class="value">${v}</div><div class="hint ${c}">${h}</div></div>`).join("") : ""}
-        ${hasTx ? `<div class="card span-8"><h2>Cash flow, last 12 months</h2>${cashflowChart(months)}</div>` : ""}
-        ${ins.length ? `<div class="card span-4"><h2>Needs attention</h2>${ins.map(([c, t]) => `<div class="insight ${c}">${esc(t)}</div>`).join("")}</div>` : ""}
-        ${snaps.length ? `<div class="card span-8"><h2>Net worth over time</h2>${lineChart(snaps.map((s) => ({ v: s.value, label: monthLabel(ym(s.date)) })), "Net worth over time")}</div>` : ""}
-        ${hasGoals ? `<div class="card span-4"><h2>Goals</h2>${goalsList(true)}</div>` : ""}
-        ${catRows.length ? `<div class="card span-6"><h2>Spending by category, last 3 months</h2>${barList(catRows, sum(catRows, (r) => r.v))}</div>` : ""}
-        ${allocRows.length ? `<div class="card span-6"><h2>Asset allocation</h2>${barList(allocRows, sum(allocRows, (r) => r.v))}</div>` : ""}
+        ${section(1, "Income", `<div class="big">${esc(money(inc.total))}</div>
+          <div class="hint">${esc(monthLabel(k))} · ${inc.has ? `${GROUPS.filter((g) => inc.groups[g]).length} groups` : "nothing logged yet"} · <a href="#income">Update ›</a></div>
+          ${barList(groupRows, inc.total)}`)}
+        ${section(2, "Income vs goal", `${goalBar("Total income", inc.total, goal, "var(--s1)")}${goalBar("Interest income", inc.groups["Interests"] || 0, +I.interestGoal || 0, "var(--s1)")}`)}
+        ${section(3, "Spending", `<div class="big">${esc(money(spend.total))}</div>
+          <div class="hint">${esc(monthLabel(k))} · ${spend.has ? "allocations and other expenses" : "nothing logged yet"} · <a href="#allocation">Update ›</a></div>
+          ${barList(spendRows, spend.total)}`)}
+        ${section(4, "Spending vs budget", `<div class="hint" style="margin-bottom:8px">${esc(money(spend.total))} of ${esc(money(bud.total))} monthly budget · ${pct(bud.total ? spend.total / bud.total : NaN)}</div>${budgetRows || '<p class="empty">Set budgets in Allocation.</p>'}`)}
+        ${section(5, "Left to invest", `<div class="big ${left >= 0 ? "" : "neg"}">${esc(money(left))}</div>
+          <div class="hint">Income minus spending in ${esc(monthLabel(k))}. This is what grows your net worth.</div>
+          <div class="kv"><span>Planned at goal</span><b>${esc(money(plannedLeft))}</b></div>
+          <div class="kv"><span>Share of income kept</span><b>${pct(inc.total ? left / inc.total : NaN)}</b></div>
+          <div class="kv"><span>Kept so far in ${esc(k.slice(0, 4))}</span><b>${esc(money(ytd))}</b></div>
+          <div class="kv"><span>Net worth today</span><b>${S.accounts.length ? esc(money(netWorth())) : '<a href="#wealth">Add accounts ›</a>'}</b></div>`, 12)}
+        <div class="card span-12"><h2>Income by month</h2>${incomeChart(k)}</div>
       </div>`;
   };
 
@@ -363,7 +376,7 @@
     const invested = S.accounts.filter((a) => a.cost);
     const totCost = sum(invested, (a) => +a.cost), totVal = sum(invested, (a) => +a.value);
     return `
-      <h1>Investments &amp; Accounts</h1>
+      <h1>Net worth</h1>
       <p class="sub">Every account, holding and debt. Update values monthly, then take a snapshot to build your net worth history.</p>
       <div class="grid">
         <div class="card tile span-4"><div class="label">Net worth</div><div class="value">${money(netWorth())}</div></div>
@@ -429,14 +442,14 @@
     </div>`;
 
   let brainFilter = "All", brainQuery = "";
-  views.brain = () => {
+  views.journal = () => {
     const q = brainQuery.toLowerCase();
     const notes = S.notes
       .filter((n) => brainFilter === "All" || n.type === brainFilter)
       .filter((n) => !q || JSON.stringify(n).toLowerCase().includes(q))
       .sort((a, b) => b.date.localeCompare(a.date));
     return `
-      <h1>Second Brain</h1>
+      <h1>Journal</h1>
       <p class="sub">Principles you invest by, decisions you made and why, lessons you paid for. Searchable, so future you can learn from past you.</p>
       <div class="grid">
         <div class="card span-6">
@@ -656,15 +669,6 @@ ONE DECISION FOR NEXT MONTH
       </tbody>`;
     }).join("");
 
-    const alloc = I.allocations[k] || {};
-    const allocTotal = sum(Object.values(alloc), (v) => +v || 0);
-    const unassigned = cur.total - allocTotal;
-    const destRows = I.destinations.map((d) => `<tr><td>${esc(d.name)}</td>
-      <td class="num"><input class="amt-in" inputmode="decimal" data-dest="${d.id}" value="${fmtInput(+alloc[d.id] || 0)}" placeholder="0"></td>
-      <td class="num muted">${cur.total && alloc[d.id] ? pct(+alloc[d.id] / cur.total) : ""}</td>
-      <td><button class="link" data-del-dest="${d.id}" aria-label="Remove">✕</button></td></tr>`).join("");
-    const regina = sum(I.destinations.filter((d) => d.parent === "Regina"), (d) => +alloc[d.id] || 0);
-
     return `
       <h1>Income</h1>
       <p class="sub">Every stream, every month, against a ${esc(money(goal))} monthly target. Grow the live ones, build new ones.</p>
@@ -693,19 +697,6 @@ ONE DECISION FOR NEXT MONTH
           </table></div>
           <p class="saved-note" id="incDirty" hidden>Unsaved changes</p>
         </div>
-        <details class="card span-12 fold"><summary><h2>Distribution · ${esc(monthLabel(k))} <span class="muted" style="font-weight:400">${esc(money(allocTotal))} of ${esc(money(cur.total))}</span></h2></summary>
-          <div class="table-wrap"><table>${destRows}
-            <tfoot>
-              <tr><th>Distributed</th><th class="num" id="allocTotal">${esc(money(allocTotal))}</th><th></th><th></th></tr>
-              <tr><th>Unassigned</th><th class="num ${unassigned < 0 ? "neg" : ""}" id="allocLeft">${esc(money(unassigned))}</th><th></th><th></th></tr>
-              ${regina ? `<tr><td class="muted">Regina total</td><td class="num muted">${esc(money(regina))}</td><td></td><td></td></tr>` : ""}
-            </tfoot></table></div>
-          <form class="row" id="destForm" style="margin-top:12px">
-            <label class="f" style="flex:1">New destination<input name="name" placeholder="e.g. Savings · GBM" required></label>
-            <button>Add</button>
-          </form>
-          <p><button class="primary" id="saveAlloc">Save distribution</button></p>
-        </details>
         <details class="card span-12 fold"><summary><h2>Manage streams &amp; goal</h2></summary>
           <p class="sub" style="margin-bottom:10px">${I.streams.filter((s) => s.status === "Live").length} live · ${pipeline.length} being built. Mark one-off streams so they don't inflate your recurring number.</p>
           <div class="table-wrap"><table>
@@ -733,7 +724,120 @@ ONE DECISION FOR NEXT MONTH
         </details>
       </div>`;
   };
-  function incomeMonthSafe() { return /^\d{4}-\d{2}$/.test(incMonth) ? incMonth : lastMonths(1)[0]; }
+  function incomeMonthSafe() {
+    if (/^\d{4}-\d{2}$/.test(incMonth)) return incMonth;
+    const cur = lastMonths(1)[0], prev = shiftMonth(cur, -1);
+    return incomeTotal(cur).has || monthSpend(cur).has || !(incomeTotal(prev).has || monthSpend(prev).has) ? cur : prev;
+  }
+  const monthNav = (id) => `<div class="month-nav"><button data-mnav="-1" aria-label="Previous month">‹</button><input type="month" class="mnav-in" value="${incomeMonthSafe()}"><button data-mnav="1" aria-label="Next month">›</button></div>`;
+
+  views.allocation = () => {
+    const I = S.income, k = incomeMonthSafe(), inc = incomeTotal(k), spend = monthSpend(k), bud = budgetBy();
+    const a = I.allocations[k] || {};
+    const allocated = spend.total - spend.other, left = inc.total - allocated;
+    const groups = ALLOC_GROUPS.concat([...new Set(I.destinations.map((d) => d.group))].filter((g) => !ALLOC_GROUPS.includes(g)));
+    const rows = groups.map((g) => {
+      const list = I.destinations.filter((d) => d.group === g); if (!list.length) return "";
+      return `<tbody>
+        <tr class="grp-head"><th>${esc(g)}${ALLOC_NOTE[g] ? `<div class="row-note" style="font-weight:400">${esc(ALLOC_NOTE[g])}</div>` : ""}</th>
+          <th class="num muted">${bud.groups[g] ? esc(money(bud.groups[g])) : ""}</th><th class="num" data-gsum="${esc(g)}">${esc(money(spend.groups[g] || 0))}</th></tr>
+        ${list.map((d) => `<tr><td>${esc(d.name)}${d.purpose ? `<div class="row-note">${esc(d.purpose)}</div>` : ""}</td>
+          <td class="num muted">${d.budget ? esc(money(+d.budget)) : "–"}</td>
+          <td class="num"><input class="amt-in" inputmode="decimal" data-act="${d.id}" value="${fmtInput(+a[d.id] || 0)}" placeholder="0"></td></tr>`).join("")}
+      </tbody>`;
+    }).join("");
+    const planRows = I.destinations.map((d) => `<tr>
+      <td><input data-pl-name="${d.id}" value="${esc(d.name)}"></td>
+      <td><select data-pl-group="${d.id}">${groups.map((g) => `<option ${g === d.group ? "selected" : ""}>${esc(g)}</option>`).join("")}</select></td>
+      <td><input data-pl-purpose="${d.id}" value="${esc(d.purpose || "")}"></td>
+      <td class="num"><input class="amt-in" inputmode="decimal" data-pl-budget="${d.id}" value="${fmtInput(+d.budget || 0)}" placeholder="0"></td>
+      <td><button class="link" data-pl-del="${d.id}" aria-label="Remove">✕</button></td></tr>`).join("");
+    return `
+      <h1>Allocation</h1>
+      <p class="sub">Where each month's income goes and why. The plan is your monthly budget. Enter what actually went out.</p>
+      ${monthNav()}
+      <div class="grid">
+        <div class="card tile span-4"><div class="label">Income ${esc(monthLabel(k))}</div><div class="value">${esc(money(inc.total))}</div><div class="hint"><a href="#income">From Income ›</a></div></div>
+        <div class="card tile span-4"><div class="label">Allocated</div><div class="value" id="alTotal">${esc(money(allocated))}</div><div class="hint">Plan ${esc(money(bud.total))} per month</div></div>
+        <div class="card tile span-4"><div class="label">Left to invest</div><div class="value ${left < 0 ? "neg" : ""}" id="alLeft">${esc(money(left))}</div><div class="hint">Planned at goal: ${esc(money((+I.goal || 0) - bud.total))}</div></div>
+        <div class="card span-12"><div class="card-head"><h2>${esc(monthLabel(k))}</h2><span><button id="alCopy">Use plan amounts</button> <button class="primary" id="alSave">Save month</button></span></div>
+          <div class="table-wrap"><table class="inc-table">
+            <thead><tr><th>Line</th><th class="num">Plan</th><th class="num">Actual</th></tr></thead>
+            ${rows}
+            <tfoot><tr><th>Total</th><th class="num">${esc(money(bud.total))}</th><th class="num" id="alFoot">${esc(money(allocated))}</th></tr></tfoot>
+          </table></div>
+          <p class="saved-note" id="alDirty" hidden>Unsaved changes</p>
+        </div>
+        <details class="card span-12 fold"><summary><h2>Edit plan</h2></summary>
+          <div class="table-wrap"><table class="plan-table">
+            <thead><tr><th>Line</th><th>Group</th><th>Purpose</th><th class="num">Monthly plan</th><th></th></tr></thead>
+            <tbody>${planRows}</tbody></table></div>
+          <p><button class="primary" id="plSave">Save plan</button></p>
+          <form class="row" id="plAdd">
+            <label class="f">New line<input name="name" required placeholder="e.g. Red media"></label>
+            <label class="f">Group<input name="group" list="plGroups" value="Payments" required><datalist id="plGroups">${groups.map((g) => `<option value="${esc(g)}">`).join("")}</datalist></label>
+            <label class="f">Purpose<input name="purpose"></label>
+            <label class="f">Monthly plan<input name="budget" inputmode="decimal"></label>
+            <button>Add line</button>
+          </form>
+        </details>
+      </div>`;
+  };
+
+  let alAbort = null;
+  function wireAllocation() {
+    if (alAbort) alAbort.abort(); alAbort = new AbortController();
+    const sig = { signal: alAbort.signal }, I = S.income, k = incomeMonthSafe();
+    let dirty = false;
+    const inc = incomeTotal(k).total;
+    const totalIn = () => sum([...document.querySelectorAll("[data-act]")], (el) => num(el.value));
+    const refresh = () => { const t = totalIn(); $("#alTotal").textContent = money(t); $("#alFoot").textContent = money(t); $("#alLeft").textContent = money(inc - t); };
+    const saveAct = () => { const a = {}; document.querySelectorAll("[data-act]").forEach((el) => { const v = num(el.value); if (v) a[el.dataset.act] = v; }); I.allocations[k] = a; dirty = false; };
+    $("#view").addEventListener("input", (e) => { if (e.target.dataset.act) { dirty = true; $("#alDirty").hidden = false; refresh(); } }, sig);
+    $("#alSave").onclick = () => { saveAct(); commit(); };
+    $("#alCopy").onclick = () => {
+      document.querySelectorAll("[data-act]").forEach((el) => { const d = I.destinations.find((x) => x.id === el.dataset.act); if (!num(el.value) && d && +d.budget) el.value = fmtInput(+d.budget); });
+      dirty = true; $("#alDirty").hidden = false; refresh();
+    };
+    $("#plSave").onclick = () => {
+      if (dirty) saveAct();
+      I.destinations.forEach((d) => {
+        const v = (attr) => { const el = $(`[data-pl-${attr}="${d.id}"]`); return el ? el.value : null; };
+        d.name = v("name") || d.name; d.group = v("group") || d.group; d.purpose = v("purpose") || ""; d.budget = num(v("budget"));
+      });
+      commit();
+    };
+    $("#plAdd").onsubmit = (e) => {
+      e.preventDefault(); if (dirty) saveAct(); const x = formData(e.target);
+      I.destinations.push({ id: "a" + uid(), name: x.name, group: x.group.trim() || "Payments", purpose: x.purpose, budget: num(x.budget) });
+      commit();
+    };
+    $("#view").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-pl-del]"); if (!b) return;
+      if (confirm("Remove this line? Amounts already logged for it stop counting.")) { if (dirty) saveAct(); I.destinations = I.destinations.filter((d) => d.id !== b.dataset.plDel); commit(); }
+    }, sig);
+    window.onbeforeunload = () => { if (dirty) { saveAct(); save(); } };
+  }
+
+  views.expenses = () => {
+    const k = incomeMonthSafe(), spend = monthSpend(k), bud = budgetBy();
+    const rows = ALLOC_GROUPS.map((g, i) => ({ g, act: spend.groups[g] || 0, plan: bud.groups[g] || 0 })).filter((r) => r.act || r.plan);
+    return `
+      <h1>Expenses</h1>
+      <p class="sub">Everything that went out in ${esc(monthLabel(k))}: the allocation lines plus any other expenses.</p>
+      ${monthNav()}
+      <div class="grid">
+        <div class="card tile span-4"><div class="label">Spent ${esc(monthLabel(k))}</div><div class="value">${esc(money(spend.total))}</div><div class="hint">${pct(bud.total ? spend.total / bud.total : NaN)} of budget</div></div>
+        <div class="card tile span-4"><div class="label">Monthly budget</div><div class="value">${esc(money(bud.total))}</div><div class="hint"><a href="#allocation">Edit in Allocation ›</a></div></div>
+        <div class="card tile span-4"><div class="label">Other expenses</div><div class="value">${esc(money(spend.other))}</div><div class="hint">Not part of a planned line</div></div>
+        <div class="card span-12"><h2>Spending vs budget</h2>
+          ${rows.map((r) => `<div class="bva"><div class="bva-top"><span>${esc(r.g)}</span><span><b>${esc(money(r.act))}</b> <span class="muted">of ${r.plan ? esc(money(r.plan)) : "no budget"}</span></span></div>
+            <div class="track"><div class="fill" style="width:${r.plan ? Math.min(100, (r.act / r.plan) * 100) : r.act ? 100 : 0}%;background:${r.plan && r.act > r.plan ? "var(--critical)" : "var(--s2)"}"></div></div></div>`).join("")}
+        </div>
+      </div>
+      <h2 style="margin-top:24px">Other expenses</h2>
+      ${views.flows().replace(/<h1>Transactions<\/h1>\s*<p class="sub">[^<]*<\/p>/, '<p class="sub">Expenses outside the allocation plan. Log them one by one or import a CSV.</p>')}`;
+  };
 
   function proposalsHtml() {
     if (!proposals) return "";
@@ -741,7 +845,7 @@ ONE DECISION FOR NEXT MONTH
     if (!proposals.items.length) return `<p class="empty">No amounts found in those images.</p>`;
     const opts = (sel) => `<option value="">Skip</option>
       <optgroup label="Income stream">${S.income.streams.filter((s) => s.status !== "Archived").map((s) => `<option value="s:${s.id}" ${sel === "s:" + s.id ? "selected" : ""}>${esc(s.group)} · ${esc(s.name)}</option>`).join("")}</optgroup>
-      <optgroup label="Distribution">${S.income.destinations.map((d) => `<option value="d:${d.id}" ${sel === "d:" + d.id ? "selected" : ""}>${esc(d.name)}</option>`).join("")}</optgroup>`;
+      <optgroup label="Allocation">${S.income.destinations.map((d) => `<option value="d:${d.id}" ${sel === "d:" + d.id ? "selected" : ""}>${esc(d.group)} · ${esc(d.name)}</option>`).join("")}</optgroup>`;
     return `<div class="prop-list">${proposals.items.map((p, i) => `
       <div class="prop">
         <div class="muted" style="font-size:12px">${esc(p.date || "")} ${esc(p.label || "")}${p.note ? " · " + esc(p.note) : ""}</div>
@@ -777,7 +881,7 @@ ONE DECISION FOR NEXT MONTH
       ctl = new AbortController();
       btn.disabled = true; $("#photoStop").hidden = false; $("#photoStatus").textContent = "Reading…";
       const streams = S.income.streams.filter((s) => s.status !== "Archived").map((s) => `${s.id}: ${s.group} / ${s.name}`).join("\n");
-      const dests = S.income.destinations.map((d) => `${d.id}: ${d.name}`).join("\n");
+      const dests = S.income.destinations.map((d) => `${d.id}: ${d.group} / ${d.name}${d.purpose ? " (" + d.purpose + ")" : ""}`).join("\n");
       const prompt = `These images are bank statements, transfer receipts or payment confirmations (Mexico, amounts in ${S.settings.currency}).
 Extract every money movement you can read. Classify each as:
 - "income": money received from one of the income streams below, or
@@ -819,31 +923,23 @@ Amounts are positive numbers without currency symbols. Do not invent items you c
     incAbort = new AbortController();
     const sig = { signal: incAbort.signal };
     const I = S.income, k = incomeMonthSafe();
-    let dirtyInc = false, dirtyAlloc = false;
+    let dirtyInc = false;
     $("#incMonth").onchange = (e) => { if (e.target.value) { incMonth = e.target.value; render(); } };
     const totalIn = () => sum([...document.querySelectorAll("[data-stream]")], (el) => num(el.value));
-    const allocIn = () => sum([...document.querySelectorAll("[data-dest]")], (el) => num(el.value));
     $("#view").addEventListener("input", (e) => {
       const t = e.target;
       if (t.dataset.stream) {
         dirtyInc = true; $("#incDirty").hidden = false;
         $("#incTotal").textContent = money(totalIn());
-        $("#allocLeft").textContent = money(totalIn() - allocIn());
       }
-      if (t.dataset.dest) { dirtyAlloc = true; $("#allocTotal").textContent = money(allocIn()); $("#allocLeft").textContent = money(totalIn() - allocIn()); }
     }, sig);
     const saveInc = () => {
       const e = {}; document.querySelectorAll("[data-stream]").forEach((el) => { const v = num(el.value); if (v) e[el.dataset.stream] = v; });
       I.entries[k] = e; dirtyInc = false;
     };
-    const saveAlloc = () => {
-      const a = {}; document.querySelectorAll("[data-dest]").forEach((el) => { const v = num(el.value); if (v) a[el.dataset.dest] = v; });
-      I.allocations[k] = a; dirtyAlloc = false;
-    };
     // keep unsaved typing when another action re-renders
-    const keep = () => { if (dirtyInc) saveInc(); if (dirtyAlloc) saveAlloc(); };
+    const keep = () => { if (dirtyInc) saveInc(); };
     $("#saveInc").onclick = () => { saveInc(); commit(); };
-    $("#saveAlloc").onclick = () => { saveAlloc(); commit(); };
     $("#copyPrev").onclick = () => {
       const p = I.entries[shiftMonth(k, -1)] || {};
       document.querySelectorAll("[data-stream]").forEach((el) => { if (!num(el.value) && p[el.dataset.stream]) el.value = fmtInput(p[el.dataset.stream]); });
@@ -853,7 +949,6 @@ Amounts are positive numbers without currency symbols. Do not invent items you c
       const b = e.target.closest("[data-mshift],[data-archive],[data-del-dest],#propApply,#propClear,#propMonth"); if (!b) return;
       if (b.dataset.mshift) { keep(); save(); incMonth = shiftMonth(k, +b.dataset.mshift); render(); }
       if (b.dataset.archive && confirm("Archive this stream? Its history is kept.")) { keep(); I.streams.find((s) => s.id === b.dataset.archive).status = "Archived"; commit(); }
-      if (b.dataset.delDest && confirm("Remove this destination?")) { keep(); I.destinations = I.destinations.filter((d) => d.id !== b.dataset.delDest); commit(); }
       if (b.id === "propMonth") { keep(); save(); incMonth = proposals.month; render(); }
       if (b.id === "propClear") { proposals = null; render(); }
       if (b.id === "propApply") {
@@ -878,17 +973,18 @@ Amounts are positive numbers without currency symbols. Do not invent items you c
       I.streams.push({ id: "st" + uid(), name: x.name, group: x.group, status: x.status, recurring: x.group !== "Deal building" });
       commit();
     };
-    $("#destForm").onsubmit = (e) => { e.preventDefault(); keep(); I.destinations.push({ id: "d" + uid(), name: formData(e.target).name, parent: "" }); commit(); };
     $("#goalForm").onsubmit = (e) => { e.preventDefault(); keep(); const x = formData(e.target); I.goal = num(x.goal) || I.goal; I.interestGoal = num(x.interestGoal); I.goalDate = x.goalDate; commit(); };
-    window.onbeforeunload = () => { if (dirtyInc || dirtyAlloc) { keep(); save(); } };
+    window.onbeforeunload = () => { if (dirtyInc) { keep(); save(); } };
     mountPhotoBox();
   }
 
   // ---------- render + events ----------
   function render() {
-    const route = (location.hash || "#dashboard").slice(1);
-    const fn = views[route] || views.dashboard;
-    document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("on", a.getAttribute("href") === "#" + route));
+    let route = (location.hash || "#dashboard").slice(1);
+    route = { flows: "expenses", brain: "journal" }[route] || route;
+    if (!views[route]) route = "dashboard";
+    const fn = views[route];
+    document.querySelectorAll("#nav a, #nav2 a").forEach((a) => a.classList.toggle("on", a.getAttribute("href") === "#" + route));
     const banner = S.isSample ? `<div class="insight">You are looking at sample data. Erase it in <a href="#settings">Settings</a> and start with your own accounts.</div>` : "";
     $("#view").innerHTML = banner + fn();
     tip.hidden = true;
@@ -900,7 +996,11 @@ Amounts are positive numbers without currency symbols. Do not invent items you c
 
   function wire(route) {
     if (incAbort && route !== "income") { incAbort.abort(); incAbort = null; window.onbeforeunload = null; }
+    if (alAbort && route !== "allocation") { alAbort.abort(); alAbort = null; window.onbeforeunload = null; }
     const v = $("#view");
+    // shared month navigation (dashboard, allocation, expenses)
+    v.querySelectorAll("[data-mnav],[data-dshift]").forEach((b) => b.addEventListener("click", () => { incMonth = shiftMonth(incomeMonthSafe(), +(b.dataset.mnav || b.dataset.dshift)); render(); }));
+    v.querySelectorAll(".mnav-in,#dashMonth").forEach((el) => (el.onchange = () => { if (el.value) { incMonth = el.value; render(); } }));
     v.onclick = (e) => {
       const b = e.target.closest("button, [data-m], [data-nt]"); if (!b) return;
       const d = b.dataset;
@@ -917,7 +1017,8 @@ Amounts are positive numbers without currency symbols. Do not invent items you c
     };
 
     if (route === "income") wireIncome();
-    if (route === "flows") {
+    if (route === "allocation") wireAllocation();
+    if (route === "expenses") {
       const kind = $("#kindSel"), cat = $("#catSel");
       kind.onchange = () => (cat.innerHTML = (kind.value === "income" ? INCOME_CATS : EXPENSE_CATS).map((c) => `<option>${c}</option>`).join(""));
       $("#txForm").onsubmit = (e) => { e.preventDefault(); const x = formData(e.target); S.transactions.push({ id: uid(), ...x, amount: +x.amount }); commit(); };
@@ -1092,7 +1193,7 @@ Amounts are positive numbers without currency symbols. Do not invent items you c
     if (j === lastJSON[name]) return;
     lastJSON[name] = j;
     const d = JSON.parse(j);
-    if (name === "income") S.income = Object.assign(incomeSeed(), d);
+    if (name === "income") S.income = normalizeIncome(d);
     else { const inc = S.income; S = Object.assign(blank(), d); S.income = inc; }
     lastJSON[name] = JSON.stringify(parts()[name]); // normalized, so an unchanged doc is never rewritten
     try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* ignore */ }

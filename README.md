@@ -1,4 +1,4 @@
-# Finance Second Brain
+# Finance HQ
 
 A private dashboard and thinking space for your money. Open `index.html` in a browser. No install, no account, no server.
 
