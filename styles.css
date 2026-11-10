@@ -245,3 +245,5 @@ details.fold[open] > summary::after { content: "－"; }
 .cat-table td, .cat-table th { padding: 6px 4px; }
 .dash-sec .label { color: var(--ink-2); font-size: 13px; }
 @media (max-width: 520px) { .tile .value { font-size: clamp(15px, 4.3vw, 20px); white-space: nowrap; overflow-wrap: normal; } }
+.kv.check .status { display: inline-block; width: 18px; color: var(--muted); }
+.kv.check .status.ok { color: var(--good-text); }

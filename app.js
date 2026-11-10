@@ -404,9 +404,30 @@
           <div class="kv"><span>Left to invest in ${esc(k.slice(0, 4))}</span><b>${esc(money(ytdLeft))}</b></div>
           <div class="kv"><span>Reinvested in ${esc(k.slice(0, 4))}</span><b>${esc(money(ytdRe))}</b></div>
           <div class="hint" style="margin-top:6px"><a href="#savings">Update balances ›</a></div>`)}
+        ${section(5, "Monthly checklist", checklist(k), 12)}
         <div class="card span-12"><h2>Income by month</h2>${incomeChart(k)}</div>
       </div>`;
   };
+  // What to upload each month and whether it has arrived. Income for a month is reported early the next month.
+  function checklist(k) {
+    const I = S.income, e = I.entries[k] || {}, [y, m] = k.split("-").map(Number);
+    const firstMon = (() => { const d = new Date(y, m - 1, 1); while (d.getDay() !== 1) d.setDate(d.getDate() + 1); return d.getDate(); })();
+    const has = (ids) => ids.every((id) => +e[id]);
+    const some = (ids) => ids.filter((id) => +e[id]).length;
+    const saldo = (savingsOf(k).places.saldo || {});
+    const bb = (savingsOf(k).places.bbva || {});
+    const cardsLogged = monthSpend(k).list.some((t) => t.from === "trfcs" || t.from === "trfrv");
+    const due = (day) => `${day} ${new Date(y, m - 1, day).toLocaleDateString(undefined, { month: "short" })}`;
+    const rows = [
+      [firstMon, due(firstMon) + " (1st Monday)", "Cash cows: Exitus, Optiserv, Calidris, TEU, Luel, Alakart, JNS", has(["st4"]) && some(["st4", "st5", "st6", "st8", "st10", "st11"]) >= 3],
+      [5, due(5), "Interests: Aplazo / Troi (Inbursa) · Saldo Excel updated", +e.st2 > 0 && !/pending/i.test(saldo.note || "") && +saldo.left > 0],
+      [10, due(10), "Cash cows: Human, Altavista", +e.st7 > 0 && +e.st9 > 0],
+      [15, due(15), "Bank statements: BBVA and TRF cards (CS, RV)", +bb.left > 0 && !/estimate/i.test(bb.note || "") && cardsLogged],
+      [99, "As they come", "Payment receipts (transfers, payroll, providers)", monthSpend(k).list.length > 0 || allocatedBy(k).total > 0],
+    ].sort((a, b) => a[0] - b[0]);
+    return `<div class="hint">For ${esc(monthLabel(k))}. Send each file in the Finance HQ conversation with Claude.</div>
+      ${rows.map(([, when, what, ok]) => `<div class="kv check"><span><b class="status ${ok ? "ok" : ""}">${ok ? "✓" : "○"}</b> ${esc(what)}</span><span class="muted">${esc(when)}</span></div>`).join("")}`;
+  }
   function bva(label, act, plan, word) {
     return `<div class="bva"><div class="bva-top"><span>${esc(label)}</span><span><b>${esc(money(act))}</b> <span class="muted">${plan ? `of ${esc(money(plan))} ${word || ""}` : "no budget"}</span></span></div>
       <div class="track"><div class="fill" style="width:${plan ? Math.min(100, (act / plan) * 100) : act ? 100 : 0}%;background:${plan && act > plan ? "var(--critical)" : "var(--s2)"}"></div></div></div>`;
