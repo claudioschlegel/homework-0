@@ -253,3 +253,22 @@ details.fold[open] > summary::after { content: "－"; }
 .ye-bar .ye-now { background: var(--s3); }
 .ye-bar i { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--ink); }
 .ye-bar span { position: absolute; top: 28px; font-size: 12px; color: var(--ink-2); transform: translateX(-50%); white-space: nowrap; }
+/* summary dashboard */
+.dash-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 16px; }
+.dash-head h1 { margin: 0; }
+.dash-head .month-nav { margin: 0; }
+.places { display: grid; grid-template-columns: repeat(auto-fill, minmax(178px, 1fr)); gap: 10px; }
+.place { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--page); }
+.place .label { color: var(--ink-2); font-size: 13px; }
+.place .pv { font-size: 18px; font-weight: 650; margin-top: 2px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.place .hint { color: var(--muted); font-size: 12px; }
+.place-muted .pv { color: var(--ink-2); }
+.totals { display: flex; flex-wrap: wrap; gap: 12px 40px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--grid); align-items: flex-end; }
+.totals .label { color: var(--ink-2); font-size: 13px; }
+.totals .tv { font-size: 20px; font-weight: 650; }
+.totals .hint { color: var(--muted); font-size: 12px; }
+.sum-box .hint { color: var(--muted); font-size: 13px; margin: 2px 0 8px; }
+.sum-box .card-head a, .card-head a.hint { color: var(--s1); text-decoration: none; font-size: 13px; }
+.mini-bar { height: 8px; border-radius: 4px; background: var(--grid); overflow: hidden; margin-bottom: 6px; }
+.mini-bar > div { height: 100%; background: var(--s1); border-radius: 4px; }
+@media (max-width: 520px) { .places { grid-template-columns: 1fr 1fr; } .place .pv { font-size: clamp(13px, 4vw, 16px); } .place { padding: 8px 10px; } }
