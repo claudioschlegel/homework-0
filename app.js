@@ -359,18 +359,19 @@
   views.dashboard = () => {
     const k = incomeMonthSafe(), I = S.income;
     const inc = incomeTotal(k), al = allocatedBy(k), sp = spendFull(k), goal = +I.goal || 0;
-    // 1. where the money sits
-    const order = ["bbva", "saldo", "trfcs", "trfrv", "cash", "patrimonial", "loans", "loggia"];
-    const pls = order.map((id) => PLACES.find((p) => p.id === id)).filter(Boolean).map((pl) => ({ pl, ...placeValue(k, pl) }))
-      .filter((x) => x.v || ["bbva", "saldo", "trfcs", "cash"].includes(x.pl.id));
-    // Totals use confirmed balances only; card and cash estimates are shown apart (that money is probably being spent).
-    const total = sum(pls.filter((x) => !x.est), (x) => x.v), estimated = sum(pls.filter((x) => x.est), (x) => x.v);
-    const available = sum(pls.filter((x) => !x.est && !x.pl.locked && !x.pl.tag), (x) => x.v);
+    // 1. where the money sits: Bank = BBVA account + Patrimonial; Saldo = available + loans it funded
+    const pv = (id) => placeValue(k, PLACES.find((p) => p.id === id));
+    const bbva = pv("bbva").v, patri = pv("patrimonial").v, saldoAv = pv("saldo").v, loans = pv("loans").v, loggia = pv("loggia").v;
+    const est = ["trfcs", "trfrv", "cash"].map((id) => ({ id, name: PLACES.find((p) => p.id === id).name, ...pv(id) }));
+    const total = bbva + patri + saldoAv + loans + loggia + sum(est.filter((x) => !x.est), (x) => x.v);
+    const estimated = sum(est.filter((x) => x.est), (x) => x.v);
+    const available = total - loans;
     const Y = I.yearEnd || {};
-    const placeTiles = pls.map((x) => `<div class="place ${x.pl.locked || x.pl.tag ? "place-muted" : ""}">
-        <div class="label">${esc(x.pl.name)}</div>
-        <div class="pv">${x.est && x.v ? "~" : ""}${esc(money(x.v))}</div>
-        <div class="hint">${x.est ? (x.v ? "estimate · no balance yet" : "no balance yet") : x.pl.locked ? "lent · back end of month" : x.pl.tag ? esc(x.pl.tag) : "available"}</div></div>`).join("");
+    const tileHtml = (name, v, hint, tilde) => `<div class="place"><div class="label">${esc(name)}</div><div class="pv">${tilde && v ? "~" : ""}${esc(money(v))}</div><div class="hint">${hint}</div></div>`;
+    const placeTiles = tileHtml("Bank · BBVA", bbva + patri, `Available ${esc(money(bbva, true))} · Patrimonial ${esc(money(patri, true))} (6.5%)`)
+      + tileHtml("Saldo", saldoAv + loans, `Available ${esc(money(saldoAv, true))}${loans ? ` · Loans out ${esc(money(loans, true))}` : ""}`)
+      + est.map((x) => tileHtml(x.name, x.v, x.est ? (x.v ? "estimate · no balance yet" : "no balance yet") : "balance entered", x.est)).join("")
+      + (loggia ? tileHtml("Loggia", loggia, "holding company") : "");
     // 2. income
     const groups = GROUPS.filter((g) => inc.groups[g]).map((g) => `<div class="kv"><span><i class="dot" style="background:${GROUP_COLOR[g]}"></i>${esc(g)}</span><b>${esc(money(inc.groups[g]))}</b></div>`).join("");
     // 3. expenses: top categories
@@ -394,8 +395,9 @@
           <div class="card-head"><h2>Where your money is</h2><a class="hint" href="#savings">Update balances ›</a></div>
           <div class="places">${placeTiles}</div>
           <div class="totals">
-            <div><div class="label">Total (confirmed balances)</div><div class="big">${esc(money(total))}</div>${estimated ? `<div class="hint">+ ~${esc(money(estimated))} on cards and cash (estimate)</div>` : ""}</div>
-            <div><div class="label">Available now</div><div class="tv">${esc(money(available))}</div><div class="hint">BBVA and Saldo, not invested or lent</div></div>
+            <div><div class="label">Total you have</div><div class="big">${esc(money(total))}</div>${estimated ? `<div class="hint">+ ~${esc(money(estimated))} on cards and cash (estimate)</div>` : ""}</div>
+            <div><div class="label">Available</div><div class="tv">${esc(money(available))}</div><div class="hint">Bank + Saldo, without loans</div></div>
+            <div><div class="label">Loans coming in</div><div class="tv">${esc(money(loans))}</div><div class="hint">Lent from Saldo, to be repaid</div></div>
             ${Y.low ? `<div><div class="label">Year-end target</div><div class="tv ${total >= Y.low ? "pos" : ""}">${esc(money(Y.low, true))}–${esc(money(Y.high, true))}</div><div class="hint">${total >= Y.low ? `Reached ${esc(money(Y.low, true))} · ${esc(money(Math.max(0, Y.high - total)))} to ${esc(money(Y.high, true))}` : `${esc(money(Y.low - total))} to go`}</div></div>` : ""}
           </div>
         </div>
