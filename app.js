@@ -33,7 +33,8 @@
     ];
     const streams = []; let n = 0;
     groups.forEach(([group, recurring, names]) => names.forEach((name) => streams.push({ id: "st" + ++n, name, group, recurring, status: "Live" })));
-    return { goal: 5500000, interestGoal: 1500000, goalDate: "", streams, destinations: allocSeed(), entries: {}, allocations: {}, savings: {}, yearEnd: { low: 8000000, high: 9000000, date: "2026-12-31", purpose: "Send to the Swiss bank or invest" } };
+    return { goal: 5500000, interestGoal: 1500000, goalDate: "", streams, destinations: allocSeed(), entries: {}, allocations: {}, savings: {}, yearEnd: { low: 8000000, high: 9000000, date: "2026-12-31", purpose: "Send to the Swiss bank or invest" },
+      plan: { date: "2027-01-31", ch: 12500000, monthSavings: 3000000, saldo: 1500000, trfcs: 350000, bbva: 1600000 } };
   }
 
   // Where each month's income goes. "budget" is the monthly plan; actuals live in income.allocations[month][id].
@@ -406,9 +407,49 @@
         ${box("Expenses", esc(money(sp.total)), `${pct(inc.total ? sp.total / inc.total : NaN)} of income${sp.pending.some((x) => x.kind === "card") ? " · cards counted as spent until statements" : ""}`,
           catRows || '<p class="empty">No expenses yet.</p>', '<a class="hint" href="#expenses">Details ›</a>')}
         ${box("Allocation", esc(money(al.total)), "Where the income was sent", allocList || '<p class="empty">Nothing allocated yet.</p>', '<a class="hint" href="#allocation">Details ›</a>')}
+        ${planCard(k)}
         <details class="card span-12 fold"><summary><h2>Monthly checklist</h2></summary>${checklist(k)}</details>
       </div>`;
   };
+
+  // January plan: money sent to CH plus minimum balances by the plan date.
+  function planCard(k) {
+    const P = S.income.plan; if (!P || !P.ch) return "";
+    const pv = (id) => placeValue(k, PLACES.find((p) => p.id === id));
+    const bbva = pv("bbva").v, patri = pv("patrimonial").v, saldo = pv("saldo").v, loans = pv("loans").v, trf = pv("trfcs");
+    const have = bbva + patri + saldo + loans + (trf.est ? 0 : trf.v);
+    const needed = P.ch + P.saldo + P.trfcs + P.bbva;
+    const gap = Math.max(0, needed - have);
+    const cur = lastMonths(1)[0], endK = P.date.slice(0, 7);
+    let months = 0; for (let m = shiftMonth(cur, 1); m <= endK; m = shiftMonth(m, 1)) months++;
+    const per = months ? gap / months : gap;
+    const left = incomeTotal(cur).total - spendFull(cur).total;
+    const planK = endK, inPlan = k === planK;
+    const pSave = inPlan ? incomeTotal(planK).total - spendFull(planK).total : NaN;
+    const row = (label, now, target, note, est) => {
+      const ok = now >= target, r = target ? Math.min(1, now / target) : 0;
+      return `<div class="plan-row"><div class="bva-top"><span>${label}</span><span><b>${est ? "~" : ""}${esc(money(now))}</b> <span class="muted">of ${esc(money(target))}</span> <b class="status ${ok ? "ok" : "behind"}">${ok ? "✓" : "○"}</b></span></div>
+        <div class="track"><div class="fill" style="width:${r * 100}%;background:${ok ? "var(--good)" : "var(--s1)"}"></div></div>${note ? `<div class="hint">${note}</div>` : ""}</div>`;
+    };
+    return `<div class="card span-12 dash-sec"><div class="card-head"><h2>January goals · by ${esc(P.date)}</h2><span class="hint">Edit in Savings</span></div>
+      <div class="plan-grid">
+        <div>
+          ${row("Send to Switzerland", Math.max(0, have - P.saldo - P.trfcs - P.bbva), P.ch, "What is left for CH after keeping the minimum balances below. Includes the Bitline loans.")}
+          ${row(`Save in ${esc(monthLabel(planK))}`, isFinite(pSave) ? Math.max(0, pSave) : 0, P.monthSavings, inPlan ? "Income minus expenses this month" : `Starts in ${esc(monthLabel(planK))}`)}
+        </div>
+        <div>
+          ${row("Saldo at least", saldo, P.saldo, "")}
+          ${row("TRF · CS", trf.v, P.trfcs, trf.est ? "Estimate until you enter the card balance" : "", trf.est)}
+          ${row("BBVA after expenses", bbva, P.bbva, "Account •4332, without Patrimonial")}
+        </div>
+      </div>
+      <div class="totals">
+        <div><div class="label">Needed by ${esc(P.date)}</div><div class="tv">${esc(money(needed))}</div><div class="hint">CH ${esc(money(P.ch, true))} + Saldo + TRF + BBVA</div></div>
+        <div><div class="label">Have now</div><div class="tv">${esc(money(have))}</div><div class="hint">incl. ${esc(money(loans, true))} Bitline owes you</div></div>
+        <div><div class="label">Gap</div><div class="tv ${gap ? "neg" : "pos"}">${esc(money(gap))}</div><div class="hint">${months ? `${esc(money(per))} to keep per month (${months} months)` : ""}</div></div>
+        <div><div class="label">Kept in ${esc(monthLabel(cur))}</div><div class="tv">${esc(money(left))}</div><div class="hint">Income − expenses so far</div></div>
+      </div></div>`;
+  }
 
   // Liquid money by the target date: balances now + what each remaining month should leave.
   function yearEndCard(k) {
