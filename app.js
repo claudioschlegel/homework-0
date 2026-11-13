@@ -425,7 +425,8 @@
     const per = months ? gap / months : gap;
     const left = incomeTotal(cur).total - spendFull(cur).total;
     const planK = endK, inPlan = k === planK;
-    const pSave = inPlan ? incomeTotal(planK).total - spendFull(planK).total : NaN;
+    // the January savings goal = salaries + bonus arriving in BBVA that month
+    const pSave = allocatedBy(planK).groups["Bank · BBVA"] || 0;
     const row = (label, now, target, note, est) => {
       const ok = now >= target, r = target ? Math.min(1, now / target) : 0;
       return `<div class="plan-row"><div class="bva-top"><span>${label}</span><span><b>${est ? "~" : ""}${esc(money(now))}</b> <span class="muted">of ${esc(money(target))}</span> <b class="status ${ok ? "ok" : "behind"}">${ok ? "✓" : "○"}</b></span></div>
@@ -435,7 +436,7 @@
       <div class="plan-grid">
         <div>
           ${row("Send to Switzerland", Math.max(0, have - P.saldo - P.trfcs - P.bbva), P.ch, "What is left for CH after keeping the minimum balances below. Includes the Bitline loans.")}
-          ${row(`Save in ${esc(monthLabel(planK))}`, isFinite(pSave) ? Math.max(0, pSave) : 0, P.monthSavings, inPlan ? "Income minus expenses this month" : `Starts in ${esc(monthLabel(planK))}`)}
+          ${row(`BBVA income + bonus in ${esc(monthLabel(planK))}`, pSave, P.monthSavings, pSave || inPlan ? "Salaries and bonus sent to BBVA that month (Allocation → Bank · BBVA)" : `Counts the salaries and bonus that reach BBVA in ${esc(monthLabel(planK))}`)}
         </div>
         <div>
           ${row("Saldo at least", saldo, P.saldo, "")}
